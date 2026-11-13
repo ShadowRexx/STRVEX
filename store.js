@@ -7,15 +7,6 @@ const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
 const MUSCLES = ["Chest", "Back", "Shoulders", "Biceps", "Triceps", "Forearms",
   "Quads", "Hamstrings", "Glutes", "Calves", "Core", "Other"];
 const EQUIPMENTS = ["All", "Barbell", "Dumbbell", "Cable", "Machine", "Smith Machine", "Bodyweight"];
-const MEASUREMENT_SITES = [
-  { id: "arms", name: "Arms / Biceps", isPct: false },
-  { id: "chest", name: "Chest", isPct: false },
-  { id: "waist", name: "Waist", isPct: false },
-  { id: "thighs", name: "Thighs", isPct: false },
-  { id: "calves", name: "Calves", isPct: false },
-  { id: "shoulders", name: "Shoulders", isPct: false },
-  { id: "bodyfat", name: "Body Fat %", isPct: true }
-];
 
 // ---------- High-Speed In-Memory Cache & O(1) Lookup ----------
 const CACHED_KEYS = new Set([
@@ -92,8 +83,8 @@ function getExercises() { return read("exercises", []); }
 function saveExercises(v) { return write("exercises", v); }
 function getBodyWeights() { return read("bodyweight", []); }
 function saveBodyWeights(v) { return write("bodyweight", v); }
-function getBodyMeasurements() { return read("measurements", []); }
-function saveBodyMeasurements(v) { return write("measurements", v); }
+function getMeasurements() { return read("measurements", []); }
+function saveMeasurements(v) { return write("measurements", v); }
 
 function getSettings() {
   const s = read("settings", {});
@@ -106,7 +97,6 @@ function getSettings() {
 }
 function saveSettings(s) { return write("settings", s); }
 function unitName() { return getSettings().unit; }
-function tapeUnitName() { return unitName() === "lbs" ? "in" : "cm"; }
 
 // ---------- Per-Exercise Pinned Notes & Custom Rest Timer ----------
 function getExerciseMetaMap() {
@@ -167,14 +157,16 @@ function initializeDatabase() {
     const existingMap = new Map(storedExercises.map(e => [e.id, e]));
     let hasChanges = false;
     DEFAULT_EXERCISES.forEach(defaultEx => {
-      const existing = existingMap.get(defaultEx.id);
-      if (!existing) {
+      if (!existingMap.has(defaultEx.id)) {
         storedExercises.push(defaultEx);
         hasChanges = true;
-      } else if (existing.type !== defaultEx.type) {
-        // Sync updated type (e.g. Plank / Dead Hang upgraded from reps -> time)
-        existing.type = defaultEx.type;
-        hasChanges = true;
+      } else {
+        // Sync "time" type upgrade for isometric exercises (Plank, Dead Hang, Wall Sit)
+        const cur = existingMap.get(defaultEx.id);
+        if (defaultEx.type === "time" && cur.type !== "time") {
+          cur.type = "time";
+          hasChanges = true;
+        }
       }
     });
     if (hasChanges) {
@@ -206,13 +198,11 @@ function initializeDatabase() {
         if (!existing.userEdited && (
           existing.name !== curated.name ||
           existing.description !== curated.description ||
-          existing.category !== curated.category ||
-          JSON.stringify(existing.exercises) !== JSON.stringify(curated.exercises)
+          existing.category !== curated.category
         )) {
           existing.name = curated.name;
           existing.description = curated.description;
           existing.category = curated.category;
-          existing.exercises = curated.exercises;
           needsUpdate = true;
         }
       }
@@ -302,12 +292,9 @@ function exName(id) {
 function exTypeOf(id) {
   const e = getExercise(id);
   if (!e) return "weight";
-  if (e.type === "reps" || e.type === "time") return e.type;
+  if (e.type === "time") return "time";
+  if (e.type === "reps") return "reps";
   return "weight";
-}
-function exIsUnweighted(id) {
-  const t = exTypeOf(id);
-  return t === "reps" || t === "time";
 }
 function exEquipmentOf(id) {
   const e = getExercise(id);
@@ -345,7 +332,7 @@ function isExerciseUsed(id) {
   return inHistory || inRoutines;
 }
 
-// ---------- Weight & Tape Unit Conversions ----------
+// ---------- Weight Unit Conversions ----------
 function showWeight(kg) {
   const v = unitName() === "lbs" ? Number(kg) * 2.20462 : Number(kg);
   return Math.round(v * 10) / 10;
@@ -360,17 +347,6 @@ function convertWeightValue(val, fromUnit, toUnit) {
   if (!Number.isFinite(num) || num <= 0) return val;
   const converted = fromUnit === "kg" ? num * 2.20462 : num / 2.20462;
   return String(Math.round(converted * 10) / 10);
-}
-// Tape measurements stored internally in cm (except Body Fat % which is raw %)
-function showTape(cmVal, isPct) {
-  if (isPct) return Math.round(Number(cmVal) * 10) / 10;
-  const v = unitName() === "lbs" ? Number(cmVal) / 2.54 : Number(cmVal);
-  return Math.round(v * 10) / 10;
-}
-function toCm(val, isPct) {
-  const v = Number(val);
-  if (isPct) return v;
-  return unitName() === "lbs" ? v * 2.54 : v;
 }
 
 // ---------- Barbell Plate Calculator & Warm-Up Generator ----------
@@ -473,7 +449,7 @@ function fmtShort(d) {
 function e1rm(kg, reps) {
   if (reps <= 0 || kg <= 0) return 0;
   if (reps === 1) return kg;
-  return kg * (1 + reps / 30); // Epley formula
+  return kg * (1 + reps / 30);
 }
 
 function getStats(sets) {
@@ -542,16 +518,28 @@ function findPRs(exId, newSets, excludeWorkoutId) {
   const EPS = 0.05;
   const old = getStats(getAllSets(exId, excludeWorkoutId));
   const now = getStats(newSets);
-  const exType = exTypeOf(exId);
+  const type = exTypeOf(exId);
 
-  if (exType === "reps" || exType === "time") {
+  if (type === "time") {
     if (old.maxReps > 0 && now.maxReps > old.maxReps) {
       return [{
         exId: exId,
-        kind: exType === "time" ? "Longest Hold" : "Max Reps",
+        kind: "Longest Hold",
         val: now.maxReps,
-        isReps: exType === "reps",
-        isTime: exType === "time"
+        isTime: true,
+        isReps: true
+      }];
+    }
+    return [];
+  }
+
+  if (type === "reps") {
+    if (old.maxReps > 0 && now.maxReps > old.maxReps) {
+      return [{
+        exId: exId,
+        kind: "Max Reps",
+        val: now.maxReps,
+        isReps: true
       }];
     }
     return [];
@@ -586,8 +574,8 @@ function findPRs(exId, newSets, excludeWorkoutId) {
 
 function formatPRValue(pr) {
   if (pr.val !== undefined && pr.val !== null) {
-    if (pr.isTime || pr.kind === "Longest Hold") return pr.val + " sec";
-    if (pr.isReps) return pr.val + " reps";
+    if (pr.isTime || exTypeOf(pr.exId) === "time") return pr.val + " sec";
+    if (pr.isReps || exTypeOf(pr.exId) === "reps") return pr.val + " reps";
     return showWeight(pr.val) + " " + unitName().toUpperCase();
   }
   return pr.text || "";
@@ -596,6 +584,7 @@ function formatPRValue(pr) {
 function workoutVolume(w) {
   let total = 0;
   (w.exercises || []).forEach(function (ex) {
+    if (exTypeOf(ex.exId) !== "weight") return;
     (ex.sets || []).forEach(function (s) {
       if (s.type !== "W") total += (Number(s.kg) || 0) * (Number(s.reps) || 0);
     });
@@ -610,7 +599,7 @@ function calculateMuscleWorkload(workouts) {
       const primary = exPrimaryMuscleOf(ex.exId);
       const secondaries = exSecondaryMusclesOf(ex.exId);
       (ex.sets || []).forEach(function (s) {
-        if (s.type !== "W") return;
+        if (s.type === "W") return;
         if (primary && primary !== "Other") {
           if (!workload[primary]) workload[primary] = { direct: 0, indirect: 0, total: 0 };
           workload[primary].direct += 1;
@@ -628,15 +617,18 @@ function calculateMuscleWorkload(workouts) {
   return workload;
 }
 
-// ---------- Muscle Recovery % & Readiness Engine (72-Hour Decay Model) ----------
+// ---------- Muscle Recovery % (Freshness / Readiness Engine) ----------
 function calculateMuscleRecovery() {
   const now = Date.now();
-  const windowMs = 72 * 3600 * 1000; // 72 hours full recovery curve
-  const mainMuscles = MUSCLES.filter(m => m !== "Other");
-  const statusMap = {};
+  const lookbackMs = 96 * 3600 * 1000; // 4 days window
+  const largeMuscles = new Set(["Chest", "Back", "Quads", "Hamstrings", "Glutes"]);
+  const trackedMuscles = MUSCLES.filter(m => m !== "Other");
+  const fatigueScore = {};
+  const lastTrainedTs = {};
 
-  mainMuscles.forEach(function (m) {
-    statusMap[m] = { fatigue: 0, lastTrainedTs: 0 };
+  trackedMuscles.forEach(m => {
+    fatigueScore[m] = 0;
+    lastTrainedTs[m] = 0;
   });
 
   getHistory().forEach(function (w) {
@@ -644,47 +636,50 @@ function calculateMuscleRecovery() {
     if (!d) return;
     const ts = d.getTime();
     const ageMs = now - ts;
-    if (ageMs < 0 || ageMs > windowMs) return;
+    if (ageMs < 0 || ageMs > lookbackMs) return;
 
-    const decayFactor = 1 - (ageMs / windowMs); // 1.0 right after workout -> 0.0 at 72h
-
+    const ageHours = ageMs / 3600000;
     (w.exercises || []).forEach(function (ex) {
       const primary = exPrimaryMuscleOf(ex.exId);
       const secondaries = exSecondaryMusclesOf(ex.exId);
       const workingSets = (ex.sets || []).filter(s => s.type !== "W").length;
-      if (workingSets === 0) return;
+      if (workingSets <= 0) return;
 
-      if (statusMap[primary]) {
-        statusMap[primary].fatigue += workingSets * 13 * decayFactor;
-        if (ts > statusMap[primary].lastTrainedTs) statusMap[primary].lastTrainedTs = ts;
+      if (primary && fatigueScore[primary] !== undefined) {
+        const recWindow = largeMuscles.has(primary) ? 72 : 48;
+        if (ageHours < recWindow) {
+          const decay = 1 - (ageHours / recWindow);
+          fatigueScore[primary] += workingSets * 12 * decay;
+          if (ts > lastTrainedTs[primary]) lastTrainedTs[primary] = ts;
+        }
       }
+
       secondaries.forEach(function (sec) {
-        if (statusMap[sec]) {
-          statusMap[sec].fatigue += workingSets * 5.5 * decayFactor;
-          if (ts > statusMap[sec].lastTrainedTs) statusMap[sec].lastTrainedTs = ts;
+        if (sec && fatigueScore[sec] !== undefined) {
+          const recWindow = largeMuscles.has(sec) ? 72 : 48;
+          if (ageHours < recWindow) {
+            const decay = 1 - (ageHours / recWindow);
+            fatigueScore[sec] += workingSets * 5 * decay;
+            if (ts > lastTrainedTs[sec]) lastTrainedTs[sec] = ts;
+          }
         }
       });
     });
   });
 
-  const out = {};
-  mainMuscles.forEach(function (m) {
-    const rawRecovery = Math.round(Math.max(5, Math.min(100, 100 - statusMap[m].fatigue)));
-    let state = "FRESH";
-    if (rawRecovery < 55) state = "FATIGUED";
-    else if (rawRecovery < 85) state = "RECOVERING";
-
-    const hoursAgo = statusMap[m].lastTrainedTs > 0
-      ? Math.max(1, Math.round((now - statusMap[m].lastTrainedTs) / 3600000))
-      : null;
-
-    out[m] = {
-      pct: rawRecovery,
-      state: state,
-      hoursAgo: hoursAgo
+  return trackedMuscles.map(function (m) {
+    const rawFatigue = Math.min(95, Math.round(fatigueScore[m]));
+    const recoveryPct = Math.max(5, 100 - rawFatigue);
+    let status = "Fresh";
+    if (recoveryPct < 55) status = "Rest Needed";
+    else if (recoveryPct < 85) status = "Recovering";
+    return {
+      muscle: m,
+      pct: recoveryPct,
+      status: status,
+      lastTs: lastTrainedTs[m]
     };
-  });
-  return out;
+  }).sort((a, b) => a.pct - b.pct);
 }
 
 // ---------- Hevy & Strong CSV Importer Engine ----------
@@ -807,8 +802,7 @@ function importWorkoutsFromCsv(csvText) {
       kg = unitName() === "lbs" ? rawW / 2.20462 : rawW;
     }
 
-    const repsOrSec = Number(r["reps"] || r["duration_seconds"] || r["seconds"] || 0);
-    const reps = Math.max(1, Math.round(repsOrSec));
+    const repsOrSec = Math.max(1, Math.round(Number(r["reps"] || r["duration_seconds"] || r["seconds"] || 1)));
     const rawType = String(r["set_type"] || r["set order"] || "N").toUpperCase();
     let setType = "N";
     if (rawType.startsWith("W")) setType = "W";
@@ -818,7 +812,7 @@ function importWorkoutsFromCsv(csvText) {
     const rpeVal = Number(r["rpe"]);
     const setObj = {
       kg: Math.round(kg * 100) / 100,
-      reps: reps,
+      reps: repsOrSec,
       type: setType
     };
     if (Number.isFinite(rpeVal) && rpeVal >= 5 && rpeVal <= 10) {

@@ -1,0 +1,19 @@
+{
+  "name": "STRVEX // Strength Logbook",
+  "short_name": "STRVEX",
+  "description": "Fast, 100% Free, Offline-First Gym Workout Logbook & Strength Tracker.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#121211",
+  "theme_color": "#121211",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

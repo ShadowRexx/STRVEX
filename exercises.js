@@ -506,7 +506,7 @@ function getExerciseGuide(exId) {
     },
     Core: {
       setup: "Exhale slightly to pull your ribs down toward your pelvis and flatten your lower back.",
-      cue: "Focus on curling the spine (or resisting movement) using abdominal tension rather than hip flexors.",
+      cue: "Focus on curling the spine (or holding isometric tension) using abdominal control rather than hip flexors.",
       mistake: "Pulling on your neck or letting your lower back arch off the floor."
     }
   };

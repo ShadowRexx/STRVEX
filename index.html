@@ -4,6 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#121211">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="STRVEX">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/svg+xml" href="icon.svg">
+  <link rel="apple-touch-icon" href="icon.svg">
   <title>STRVEX // STRENGTH LOGBOOK</title>
   <!-- Industrial & High-Performance Typography -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -105,11 +111,19 @@
     <!-- ===== Tab 3: Progress & Analytics ===== -->
     <section id="tab-progress" class="tab hidden">
       <div class="sec-bar" style="margin-top:0;">
-        <h2>MUSCLE ACTIVITY & RECOVERY</h2>
-        <span>7-DAY LOAD & 72H FRESHNESS</span>
+        <h2>MUSCLE RECOVERY & READINESS</h2>
+        <span>LIVE FRESHNESS %</span>
+      </div>
+      <div class="metal-card">
+        <div id="recoveryGrid" class="recovery-grid"></div>
       </div>
 
-      <!-- Anatomical SVG Body Map + Recovery Readiness Grid -->
+      <div class="sec-bar">
+        <h2>WEEKLY MUSCLE ACTIVITY</h2>
+        <span>LAST 7 DAYS</span>
+      </div>
+
+      <!-- Anatomical SVG Body Map with Direct vs Secondary Rendering -->
       <div class="metal-card">
         <div class="map-legend">
           <span><i class="leg-box primary"></i> DIRECT FOCUS (2+ SETS)</span>
@@ -118,16 +132,11 @@
         </div>
         <div id="analyticsBodyMap" class="anatomy-grid"></div>
         <div id="muscleDistribution" class="distribution-list"></div>
-
-        <div class="ticket-section-title" style="color:var(--brass); margin-top:16px; border-top:1px dashed var(--metal-edge); padding-top:12px;">
-          MUSCLE RECOVERY READINESS (TODAY)
-        </div>
-        <div id="muscleRecoveryGrid" class="recovery-grid"></div>
       </div>
 
       <div class="sec-bar">
         <h2>STRENGTH PROGRESS</h2>
-        <span>WEIGHT, 1RM & REP-MAX TABLE</span>
+        <span>WEIGHT, 1RM & REP TABLE</span>
       </div>
 
       <div class="metal-card">
@@ -137,14 +146,14 @@
           <button data-v="1rm">EST. 1RM</button>
           <button data-v="volume">VOLUME</button>
         </div>
-        <div class="segmented small" id="chartRangeSeg" style="margin-top:6px;">
+        <div class="segmented" id="chartRangeSeg" style="margin-top:6px;">
           <button data-v="30">1M</button>
           <button data-v="90">3M</button>
           <button data-v="180">6M</button>
-          <button data-v="0" class="active">ALL</button>
+          <button data-v="all" class="active">ALL</button>
         </div>
         <canvas id="progressCanvas" class="chart"></canvas>
-        <div id="repMaxBox" class="repmax-strip"></div>
+        <div id="repMaxBox" class="rep-max-grid"></div>
       </div>
 
       <div class="sec-bar">
@@ -168,15 +177,22 @@
 
       <div class="sec-bar">
         <h2>BODY MEASUREMENTS</h2>
-        <span id="measUnitHeader">TAPE & BODY FAT %</span>
+        <span>TAPE & BODY FAT %</span>
       </div>
       <div class="metal-card">
-        <select id="measSiteSelect" class="mech-select" aria-label="Select Body Part"></select>
-        <div class="inputRow">
-          <input type="number" step="any" id="measInput" placeholder="Enter measurement" inputmode="decimal" class="mech-input">
-          <button id="measAddBtn" class="keycap-btn primary">LOG SIZE</button>
+        <div class="inputRow" style="margin-bottom:8px;">
+          <select id="measTypeSelect" class="mech-select" style="margin-bottom:0; flex:1.2;">
+            <option value="Arms (Biceps)">Arms / Biceps (in/cm)</option>
+            <option value="Chest">Chest (in/cm)</option>
+            <option value="Waist">Waist (in/cm)</option>
+            <option value="Thighs">Thighs (in/cm)</option>
+            <option value="Calves">Calves (in/cm)</option>
+            <option value="Shoulders">Shoulders (in/cm)</option>
+            <option value="Body Fat %">Body Fat (%)</option>
+          </select>
+          <input type="number" step="any" id="measInput" placeholder="Value (e.g. 15.5)" inputmode="decimal" class="mech-input" style="flex:1;">
+          <button id="measAddBtn" class="keycap-btn primary">LOG</button>
         </div>
-        <div id="measSummaryGrid" class="meas-summary-grid"></div>
         <div id="measList" class="bw-entries"></div>
       </div>
     </section>
@@ -190,11 +206,15 @@
         </div>
 
         <div class="metal-card">
+          <div class="config-row" id="installAppRow" style="display:none;">
+            <span>Install STRVEX on Device</span>
+            <button id="installAppBtn" class="keycap-btn primary small">INSTALL APP ›</button>
+          </div>
           <div class="config-row">
-            <span>Weight & Measurement Unit</span>
+            <span>Weight Unit</span>
             <div class="segmented small" id="unitSeg">
-              <button data-v="kg">KG / CM</button>
-              <button data-v="lbs">LBS / IN</button>
+              <button data-v="kg">KG (METRIC)</button>
+              <button data-v="lbs">LBS (IMPERIAL)</button>
             </div>
           </div>
           <div class="config-row">
@@ -207,6 +227,10 @@
           <div class="config-row">
             <span>Barbell Plate Calculator</span>
             <button id="openPlateCalcSettingsBtn" class="keycap-btn small">OPEN CALCULATOR ›</button>
+          </div>
+          <div class="config-row">
+            <span>Offline Storage Protection</span>
+            <small id="storagePersistStatus" style="font-family:var(--font-mono); color:var(--ok); font-weight:700;">ACTIVE ✓</small>
           </div>
         </div>
 
@@ -516,5 +540,40 @@
   <script src="store.js"></script>
   <script src="charts.js"></script>
   <script src="app.js"></script>
+
+  <!-- PWA Service Worker & Persistent Storage Lock -->
+  <script>
+    (function () {
+      if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
+        window.addEventListener("load", function () {
+          navigator.serviceWorker.register("./sw.js").catch(function () {});
+        });
+      }
+      if (navigator.storage && navigator.storage.persist) {
+        navigator.storage.persist().then(function (persisted) {
+          const el = document.getElementById("storagePersistStatus");
+          if (el) el.textContent = persisted ? "LOCKED & PROTECTED ✓" : "DEVICE STORAGE ✓";
+        }).catch(function () {});
+      }
+      let deferredPrompt = null;
+      const installRow = document.getElementById("installAppRow");
+      const installBtn = document.getElementById("installAppBtn");
+      window.addEventListener("beforeinstallprompt", function (e) {
+        e.preventDefault();
+        deferredPrompt = e;
+        if (installRow) installRow.style.display = "flex";
+      });
+      if (installBtn) {
+        installBtn.addEventListener("click", function () {
+          if (!deferredPrompt) return;
+          deferredPrompt.prompt();
+          deferredPrompt.userChoice.then(function () {
+            deferredPrompt = null;
+            if (installRow) installRow.style.display = "none";
+          });
+        });
+      }
+    })();
+  </script>
 </body>
 </html>

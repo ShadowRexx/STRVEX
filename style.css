@@ -501,7 +501,7 @@ input, select, textarea {
 .segmented button {
   flex: 1;
   min-height: 32px;
-  padding: 0 10px;
+  padding: 0 8px;
   border-radius: 6px;
   font-family: var(--font-mono);
   font-size: 11px;
@@ -664,7 +664,45 @@ input, select, textarea {
   text-align: center;
 }
 
-/* ============ ANATOMICAL BODY MAP & RECOVERY READINESS ============ */
+/* ============ MUSCLE RECOVERY % & ANATOMICAL BODY MAP ============ */
+.recovery-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.rec-card {
+  background: var(--chassis);
+  border: 1px solid var(--metal-edge);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.rec-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  margin-bottom: 5px;
+}
+
+.rec-top b {
+  color: var(--bone);
+}
+
+.rec-bar-track {
+  height: 6px;
+  background: var(--metal-raised);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.rec-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+}
+
 .anatomy-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -746,52 +784,8 @@ input, select, textarea {
   color: var(--brass);
 }
 
-/* Muscle Recovery % Grid */
-.recovery-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.rec-card {
-  background: var(--chassis);
-  border: 1px solid var(--metal-edge);
-  border-radius: 8px;
-  padding: 8px 10px;
-}
-
-.rec-top {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.rec-bar-track {
-  width: 100%;
-  height: 5px;
-  background: var(--metal-raised);
-  border-radius: 3px;
-  margin: 5px 0 4px;
-  overflow: hidden;
-}
-
-.rec-bar-fill {
-  height: 100%;
-  border-radius: 3px;
-}
-
-.rec-sub {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--muted);
-}
-
-/* Rep-Max Estimator Strip */
-.repmax-strip {
+/* ============ 1RM REP-MAX TABLE & RECORDS ============ */
+.rep-max-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 6px;
@@ -800,7 +794,7 @@ input, select, textarea {
   border-top: 1px dashed var(--metal-edge);
 }
 
-.repmax-cell {
+.rm-cell {
   background: var(--chassis);
   border: 1px solid var(--metal-edge);
   border-radius: 6px;
@@ -809,50 +803,17 @@ input, select, textarea {
   font-family: var(--font-mono);
 }
 
-.repmax-cell small {
+.rm-cell small {
   display: block;
   font-size: 10px;
   color: var(--muted);
 }
 
-.repmax-cell b {
+.rm-cell b {
   font-size: 13px;
   color: var(--brass);
 }
 
-/* Body Measurements Summary Grid */
-.meas-summary-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 8px;
-  margin-top: 12px;
-}
-
-.meas-tile {
-  background: var(--chassis);
-  border: 1px solid var(--metal-edge);
-  border-radius: 8px;
-  padding: 8px 10px;
-  font-family: var(--font-mono);
-}
-
-.meas-tile small {
-  display: block;
-  font-size: 10px;
-  color: var(--muted);
-}
-
-.meas-tile b {
-  font-size: 14px;
-  color: var(--bone);
-}
-
-.meas-tile span {
-  font-size: 11px;
-  margin-left: 6px;
-}
-
-/* ============ RECORDS & BODY WEIGHT ============ */
 .records-container {
   display: flex;
   flex-direction: column;
@@ -1378,6 +1339,7 @@ input, select, textarea {
   margin-left: auto;
 }
 
+/* Exercise Pinned Note & Utility Bar */
 .ex-utility-bar {
   display: flex;
   align-items: center;
@@ -1417,7 +1379,7 @@ input, select, textarea {
   margin: 8px 0 10px;
 }
 
-/* Set Rows Grid */
+/* Set Rows Grid (With Optional RPE Pill & Delete Button) */
 .setHead, .setRow {
   display: grid;
   grid-template-columns: 30px 1fr 64px 54px 38px 36px 24px;
@@ -1668,7 +1630,7 @@ input, select, textarea {
   gap: 6px;
 }
 
-/* ============ MODALS ============ */
+/* ============ MODALS (SUMMARY, PREVIEW, PLATE CALC & EXERCISE GUIDE) ============ */
 #summaryBackdrop,
 #routinePreviewBackdrop,
 #exInfoBackdrop,
@@ -2163,6 +2125,7 @@ input, select, textarea {
   color: var(--flame);
 }
 
+/* Secondary Muscle Chip Multi-Selector */
 .secondary-chip-selector {
   display: flex;
   flex-wrap: wrap;
