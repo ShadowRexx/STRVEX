@@ -33,10 +33,10 @@
         <span class="brand-sub">STRENGTH LOGBOOK</span>
       </div>
     </div>
-    <div class="status-pill">
+    <button id="headerAthleteBtn" class="status-pill" title="Tap to edit profile or view tutorial">
       <span class="pulse-dot"></span>
-      <span id="headerExerciseCount">172 EXERCISES</span>
-    </div>
+      <span id="headerAthleteLabel">ATHLETE // LVL 1</span>
+    </button>
   </header>
 
   <main id="app">
@@ -111,6 +111,14 @@
     <!-- ===== Tab 3: Progress & Analytics ===== -->
     <section id="tab-progress" class="tab hidden">
       <div class="sec-bar" style="margin-top:0;">
+        <h2>ATHLETE ACHIEVEMENTS</h2>
+        <span id="achievementsCountLabel">0 / 8 UNLOCKED</span>
+      </div>
+      <div class="metal-card">
+        <div id="achievementsGrid" class="achievements-grid"></div>
+      </div>
+
+      <div class="sec-bar">
         <h2>MUSCLE RECOVERY & READINESS</h2>
         <span>LIVE FRESHNESS %</span>
       </div>
@@ -123,7 +131,7 @@
         <span>LAST 7 DAYS</span>
       </div>
 
-      <!-- Anatomical SVG Body Map with Direct vs Secondary Rendering -->
+      <!-- Anatomical SVG Body Map -->
       <div class="metal-card">
         <div class="map-legend">
           <span><i class="leg-box primary"></i> DIRECT FOCUS (2+ SETS)</span>
@@ -202,7 +210,7 @@
       <div id="moreMain">
         <div class="sec-bar" style="margin-top:0;">
           <h2>APP SETTINGS</h2>
-          <span>PREFERENCES</span>
+          <span>PROFILE & APPEARANCE</span>
         </div>
 
         <div class="metal-card">
@@ -211,10 +219,28 @@
             <button id="installAppBtn" class="keycap-btn primary small">INSTALL APP ›</button>
           </div>
           <div class="config-row">
+            <span>Athlete Profile & Tutorial</span>
+            <button id="openOnboardingBtn" class="keycap-btn small">EDIT / GUIDE ›</button>
+          </div>
+          <div class="config-row">
+            <span>Appearance Theme</span>
+            <div class="segmented small" id="themeSeg" style="margin-bottom:0;">
+              <button data-v="dark" class="active">DARK (TITANIUM)</button>
+              <button data-v="light">LIGHT (BONE)</button>
+            </div>
+          </div>
+          <div class="config-row">
             <span>Weight Unit</span>
-            <div class="segmented small" id="unitSeg">
+            <div class="segmented small" id="unitSeg" style="margin-bottom:0;">
               <button data-v="kg">KG (METRIC)</button>
               <button data-v="lbs">LBS (IMPERIAL)</button>
+            </div>
+          </div>
+          <div class="config-row">
+            <span>RPE Effort Column (Set Table)</span>
+            <div class="segmented small" id="rpeToggleSeg" style="margin-bottom:0; max-width:160px;">
+              <button data-v="off" class="active">OFF</button>
+              <button data-v="on">ON</button>
             </div>
           </div>
           <div class="config-row">
@@ -323,7 +349,7 @@
   </nav>
 
   <!-- ===== Active Workout Cockpit Modal ===== -->
-  <div id="workoutScreen" class="hidden" role="dialog" aria-modal="true" aria-label="Active Workout">
+  <div id="workoutScreen" class="hidden hide-rpe" role="dialog" aria-modal="true" aria-label="Active Workout">
     <div class="wHeaderWrap">
       <header class="wHeader">
         <button id="minimizeBtn" class="keycap-btn" aria-label="Minimize Session" title="Minimize">
@@ -333,24 +359,50 @@
           <span class="live-tag" id="workoutModeTag">LIVE</span>
           <span id="wClock" class="clock-display">00:00:00</span>
         </div>
-        <button id="finishBtn" class="keycap-btn finish">FINISH</button>
+        <div style="display:flex; align-items:center; gap:6px;">
+          <button id="musicToggleBtn" class="keycap-btn small" title="In-Workout Music Player & Spotify Switcher">🎵 MUSIC</button>
+          <button id="finishBtn" class="keycap-btn finish">FINISH</button>
+        </div>
       </header>
     </div>
 
     <div class="wBody">
+      <!-- Collapsible In-Workout Gym Music & Spotify Dock -->
+      <div id="musicDock" class="music-dock hidden">
+        <div class="music-dock-top">
+          <span><b>🎵 GYM AUDIO DECK</b></span>
+          <div style="display:flex; gap:6px;">
+            <a href="spotify:" class="keycap-btn small" style="text-decoration:none; color:var(--ok);">↗ SPOTIFY APP</a>
+            <button id="customSpotifyBtn" class="keycap-btn small">SET PLAYLIST</button>
+          </div>
+        </div>
+        <div class="chip-filter-scroll" id="musicGenreChips" style="margin-bottom:6px;">
+          <button class="filter-chip active" data-embed="https://open.spotify.com/embed/playlist/37i9dQZF1DX76Wlfdnj7AP?utm_source=generator&theme=0">BEAST MODE</button>
+          <button class="filter-chip" data-embed="https://open.spotify.com/embed/playlist/37i9dQZF1DWWY64wDtewQt?utm_source=generator&theme=0">GYM PHONK</button>
+          <button class="filter-chip" data-embed="https://open.spotify.com/embed/playlist/37i9dQZF1DWUVpAXiEPK8P?utm_source=generator&theme=0">POWER HOUR</button>
+          <button class="filter-chip" data-embed="https://open.spotify.com/embed/playlist/37i9dQZF1DX32NsLKyzScr?utm_source=generator&theme=0">HEAVY METAL</button>
+        </div>
+        <iframe id="spotifyIframe" style="border-radius:10px; border:none;" src="" width="100%" height="80" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe>
+      </div>
+
+      <!-- Live PR Dopamine Celebration Banner -->
+      <div id="livePrBanner" class="live-pr-banner hidden">
+        <span id="livePrText">🏆 NEW PERSONAL RECORD!</span>
+      </div>
+
       <div class="session-meta-panel">
         <input id="wTitle" class="titleInput" placeholder="Workout Title">
         <textarea id="wNotes" rows="2" placeholder="Session notes (machine settings, energy level)..."></textarea>
       </div>
 
-      <!-- Beginner-Friendly Set Type & RPE Legend -->
+      <!-- Beginner-Friendly Set Type Legend -->
       <div class="set-legend-bar" aria-label="Set Types Guide">
         <span><b>SET #:</b></span>
         <span><i class="leg-tag n">1</i>Work</span>
         <span><i class="leg-tag w">W</i>Warmup</span>
         <span><i class="leg-tag d">D</i>Drop</span>
         <span><i class="leg-tag f">F</i>Fail</span>
-        <span style="margin-left:auto; color:var(--brass);"><b>RPE:</b> Effort (7–10)</span>
+        <span style="margin-left:auto; color:var(--brass);"><b>TAP PREV TO COPY</b></span>
       </div>
 
       <!-- Rest Timer Cockpit Gauge -->
@@ -377,6 +429,69 @@
     </div>
   </div>
 
+  <!-- ===== First-Time Onboarding & Quick Tutorial Modal ===== -->
+  <div id="onboardingBackdrop" class="hidden"></div>
+  <div id="onboardingModal" class="hidden" role="dialog" aria-modal="true" aria-labelledby="onbModalTitle">
+    <div class="preview-head">
+      <div>
+        <span class="routine-category-badge">WELCOME TO STRVEX</span>
+        <h2 id="onbModalTitle">Setup & Quick Guide</h2>
+      </div>
+      <button id="onbCloseBtn" class="high-contrast-close" aria-label="Close Setup">✕</button>
+    </div>
+
+    <div class="config-row" style="padding-top:2px;">
+      <span>Your Name / Callsign</span>
+      <input type="text" id="onbNameInput" class="mech-input" style="max-width:190px;" placeholder="e.g. Aryan" maxlength="20">
+    </div>
+    <div class="config-row">
+      <span>Preferred Unit</span>
+      <div class="segmented small" id="onbUnitSeg" style="margin-bottom:0; max-width:190px;">
+        <button data-v="kg" class="active">KG</button>
+        <button data-v="lbs">LBS</button>
+      </div>
+    </div>
+    <div class="config-row">
+      <span>App Theme</span>
+      <div class="segmented small" id="onbThemeSeg" style="margin-bottom:0; max-width:190px;">
+        <button data-v="dark" class="active">DARK</button>
+        <button data-v="light">LIGHT (BONE)</button>
+      </div>
+    </div>
+    <div class="config-row">
+      <span>Starting Split</span>
+      <select id="onbTrackSelect" class="mech-select" style="max-width:190px; margin-bottom:0;">
+        <option value="all">All Workout Splits</option>
+        <option value="Beginner Track (3 Days)">Beginner (3 Days/Week)</option>
+        <option value="Hypertrophy Track (4 Days)">Upper / Lower (4 Days)</option>
+        <option value="Advanced Volume (6 Days PPL)">Push / Pull / Legs (6 Days)</option>
+        <option value="Classic Bodybuilding (Arnold 5-Day)">Arnold Split (5 Days)</option>
+        <option value="Home & Minimal Equipment (Dumbbells Only)">Home (Dumbbells Only)</option>
+      </select>
+    </div>
+
+    <div class="ticket-section-title" style="color:var(--brass); margin-top:14px;">HOW TO USE STRVEX IN 3 STEPS</div>
+    <div class="info-guide-box" style="margin-bottom:14px;">
+      <div class="info-guide-row">
+        <b>1. FAST IN-GYM LOGGING & 1-TAP COPY</b>
+        <span>Tap any routine's START button. Tap the "PREV" set text (e.g. 60×10) or use the +2.5 KG / +1 REP buttons to fill sets without typing, then tap ✓ to start the rest timer.</span>
+      </div>
+      <div class="info-guide-row">
+        <b>2. FORM VIDEOS, PLATES, MUSIC & WARM-UPS</b>
+        <span>Tap ⓘ INFO for form tips & YouTube demos, 🏋️ PLATES for barbell math, 🎵 MUSIC for in-workout Spotify, or 🔥 + WARM-UP for automatic warm-up sets.</span>
+      </div>
+      <div class="info-guide-row">
+        <b>3. STRAVA × HEVY FLEX STUDIO & ACHIEVEMENTS</b>
+        <span>Finish a workout to unlock Achievements and share Dark Carbon, MVP Lift, or Gym Selfie Photo Overlay Flex Cards to Instagram/WhatsApp!</span>
+      </div>
+    </div>
+
+    <button id="onbSaveBtn" class="tactile-cta" style="margin-bottom:0;">
+      <span>SAVE & LAUNCH STRVEX</span>
+      <span class="btn-sub">LET'S LIFT ›</span>
+    </button>
+  </div>
+
   <!-- ===== Barbell Plate Calculator Modal ===== -->
   <div id="plateBackdrop" class="hidden"></div>
   <div id="plateModal" class="hidden" role="dialog" aria-modal="true" aria-labelledby="plateModalTitle">
@@ -400,30 +515,109 @@
     <div id="plateResultBox" class="plate-result-box"></div>
   </div>
 
-  <!-- ===== Perforated Torn-Ticket Workout Summary Modal ===== -->
+  <!-- ===== Strava × Hevy 3-Mode Flex Studio Modal ===== -->
   <div id="summaryBackdrop" class="hidden"></div>
   <div id="summaryModal" class="hidden" role="dialog" aria-modal="true" aria-labelledby="sumTitle">
-    <div class="ticket-poster">
-      <div class="ticket-head">
-        <span class="ticket-brand">STRVEX // WORKOUT SUMMARY</span>
-        <button id="sumCloseBtn" class="sum-close-btn" aria-label="Close Summary">✕</button>
+    <div class="flex-studio-wrap">
+      <div class="flex-studio-top">
+        <div class="segmented small" id="flexModeSeg" style="margin-bottom:0; flex:1;">
+          <button data-v="carbon" class="active">⚡ CARBON FLEX</button>
+          <button data-v="mvp">👑 MVP LIFT</button>
+          <button data-v="photo">📷 PHOTO FLEX</button>
+        </div>
+        <button id="sumCloseBtn" class="high-contrast-close" aria-label="Close Summary">✕</button>
       </div>
 
-      <div id="sumDate" class="ticket-date"></div>
-      <h2 id="sumTitle" class="ticket-title">WORKOUT COMPLETE</h2>
+      <!-- CARD 1: HEVY DARK CARBON OVERVIEW + DELTA -->
+      <div id="flexCardCarbon" class="flex-card-canvas">
+        <div class="flex-brand-row">
+          <span class="flex-brand-tag">STRVEX // VERIFIED</span>
+          <span class="flex-athlete-tag" id="flexAthleteBadge">ATHLETE · LVL 1</span>
+        </div>
+        <div id="sumDate" class="flex-date-sub"></div>
+        <h2 id="sumTitle" class="flex-session-title">STRENGTH SESSION</h2>
 
-      <div class="ticket-metrics-grid" id="sumTiles"></div>
+        <div class="flex-hero-volume-box">
+          <small>TOTAL SESSION VOLUME</small>
+          <div class="flex-giant-vol" id="flexGiantVolume">0 KG</div>
+          <span class="flex-delta-pill" id="flexDeltaPill">FIRST SESSION 🔥</span>
+        </div>
 
-      <div class="ticket-section-title">MUSCLES TRAINED</div>
-      <div id="sumBodyMap" class="anatomy-grid summary-map"></div>
-      <div class="sumMusclesList" id="sumMuscles"></div>
+        <div class="flex-stats-row" id="sumTiles"></div>
 
-      <div id="sumPrSection" class="hidden">
-        <div class="ticket-section-title">NEW PERSONAL RECORDS</div>
-        <div class="sumPrList" id="sumPrs"></div>
+        <div class="flex-sub-heading">MUSCLE SPLIT & ANATOMY</div>
+        <div id="sumBodyMap" class="anatomy-grid flex-dark-map"></div>
+        <div class="sumMusclesList" id="sumMuscles"></div>
+
+        <div id="sumPrSection" class="hidden">
+          <div class="flex-sub-heading">NEW PERSONAL RECORDS</div>
+          <div class="sumPrList" id="sumPrs"></div>
+        </div>
       </div>
 
-      <button id="sumDoneBtn" class="tactile-cta" style="margin-top:16px; margin-bottom:0;">
+      <!-- CARD 2: HEVY MVP BEST LIFT OF THE DAY -->
+      <div id="flexCardMvp" class="flex-card-canvas hidden">
+        <div class="flex-brand-row">
+          <span class="flex-brand-tag">STRVEX // TOP LIFT MVP</span>
+          <span class="flex-athlete-tag" id="flexMvpDate">TODAY</span>
+        </div>
+        <div class="mvp-crown-badge">👑 SESSION MVP EXERCISE</div>
+        <h2 class="mvp-ex-title" id="mvpExName">Barbell Bench Press</h2>
+        <div class="mvp-ex-meta" id="mvpExMeta">CHEST · BARBELL</div>
+
+        <div class="mvp-hero-box">
+          <small>HEAVIEST WORKING SET</small>
+          <div class="mvp-giant-set" id="mvpTopSet">100 KG × 5</div>
+        </div>
+
+        <div class="mvp-grid-2">
+          <div class="mvp-stat-cell">
+            <small>ESTIMATED 1RM</small>
+            <b id="mvpEst1rm">116.7 KG</b>
+          </div>
+          <div class="mvp-stat-cell">
+            <small>EXERCISE VOLUME</small>
+            <b id="mvpExVol">1,500 KG</b>
+          </div>
+        </div>
+      </div>
+
+      <!-- CARD 3: STRAVA PHOTO OVERLAY FLEX CARD -->
+      <div id="flexCardPhoto" class="flex-card-canvas photo-flex-card hidden">
+        <div id="photoOverlayBg" class="photo-overlay-bg"></div>
+        <div class="photo-overlay-content">
+          <div class="flex-brand-row">
+            <span class="flex-brand-tag">STRVEX</span>
+            <label for="flexPhotoInput" class="keycap-btn small" style="cursor:pointer; background:rgba(0,0,0,0.65); color:#fff;">📷 CHANGE PHOTO</label>
+            <input type="file" id="flexPhotoInput" accept="image/*" class="hidden">
+          </div>
+
+          <div class="strava-Watermark-Bottom">
+            <div class="strava-title" id="photoFlexTitle">MORNING WORKOUT</div>
+            <div class="strava-metrics-row">
+              <div>
+                <small>VOLUME</small>
+                <b id="photoFlexVol">0 KG</b>
+              </div>
+              <div>
+                <small>SETS</small>
+                <b id="photoFlexSets">0</b>
+              </div>
+              <div>
+                <small>DURATION</small>
+                <b id="photoFlexDur">45 MIN</b>
+              </div>
+            </div>
+            <div class="strava-mvp-line" id="photoFlexMvp">TOP LIFT: BENCH PRESS</div>
+          </div>
+        </div>
+      </div>
+
+      <button id="sumSharePosterBtn" class="keycap-btn primary" style="width:100%; padding:14px; margin-top:12px; font-size:12px;">
+        📸 SHARE / DOWNLOAD THIS FLEX CARD (.PNG)
+      </button>
+
+      <button id="sumDoneBtn" class="tactile-cta secondary" style="margin-top:8px; margin-bottom:0; padding:12px 16px;">
         <span>DONE</span>
         <span class="btn-sub">→</span>
       </button>
@@ -467,7 +661,11 @@
     <div id="exInfoMuscles" class="routine-muscle-pills" style="margin-bottom:12px;"></div>
 
     <div class="ticket-section-title" style="margin-top:0;">HOW TO PERFORM (FORM GUIDE)</div>
-    <div id="exInfoGuide" class="info-guide-box"></div>
+    <div id="exInfoGuide" class="info-guide-box" style="margin-bottom:10px;"></div>
+
+    <a id="exInfoYoutubeBtn" href="#" target="_blank" rel="noopener noreferrer" class="keycap-btn primary" style="display:flex; justify-content:center; align-items:center; gap:8px; width:100%; padding:12px; text-decoration:none; margin-bottom:16px; font-size:12px;">
+      <span>▶ WATCH 15s FORM DEMO ON YOUTUBE</span>
+    </a>
 
     <div class="ticket-section-title">RECENT HISTORY FOR THIS EXERCISE</div>
     <div id="exInfoHistory" class="preview-exercise-list" style="margin-bottom:0;"></div>

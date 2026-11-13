@@ -1,4 +1,4 @@
-// ============ store.js : STRVEX DATA, CACHE, RECOVERY, MEASUREMENTS & CSV ENGINE ============
+// ============ store.js : STRVEX DATA, CACHE, FLEX INSIGHTS, ACHIEVEMENTS & CSV ENGINE ============
 
 const MONTHS = ["January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December"];
@@ -89,6 +89,12 @@ function saveMeasurements(v) { return write("measurements", v); }
 function getSettings() {
   const s = read("settings", {});
   return {
+    userName: s && typeof s.userName === "string" ? s.userName.trim() : "",
+    theme: s && s.theme === "light" ? "light" : "dark",
+    onboarded: !!(s && s.onboarded),
+    defaultTrack: s && s.defaultTrack ? String(s.defaultTrack) : "all",
+    showRpe: !!(s && s.showRpe), // OFF by default like Hevy
+    spotifyEmbedUrl: s && s.spotifyEmbedUrl ? String(s.spotifyEmbedUrl) : "https://open.spotify.com/embed/playlist/37i9dQZF1DX76Wlfdnj7AP?utm_source=generator&theme=0",
     unit: s && s.unit === "lbs" ? "lbs" : "kg",
     rest: s && Number(s.rest) > 0 ? Number(s.rest) : 60,
     barKg: s && Number(s.barKg) >= 0 ? Number(s.barKg) : 20,
@@ -97,6 +103,19 @@ function getSettings() {
 }
 function saveSettings(s) { return write("settings", s); }
 function unitName() { return getSettings().unit; }
+
+function getAthleteProfile() {
+  const s = getSettings();
+  const count = getHistory().length;
+  const level = Math.floor(count / 3) + 1;
+  const rawName = s.userName ? s.userName.toUpperCase() : "ATHLETE";
+  return {
+    name: rawName,
+    hasCustomName: !!s.userName,
+    level: level,
+    workouts: count
+  };
+}
 
 // ---------- Per-Exercise Pinned Notes & Custom Rest Timer ----------
 function getExerciseMetaMap() {
@@ -161,7 +180,6 @@ function initializeDatabase() {
         storedExercises.push(defaultEx);
         hasChanges = true;
       } else {
-        // Sync "time" type upgrade for isometric exercises (Plank, Dead Hang, Wall Sit)
         const cur = existingMap.get(defaultEx.id);
         if (defaultEx.type === "time" && cur.type !== "time") {
           cur.type = "time";
@@ -308,6 +326,11 @@ function exSecondaryMusclesOf(id) {
   const e = getExercise(id);
   return e && Array.isArray(e.secondary) ? e.secondary : [];
 }
+function getExerciseYoutubeUrl(exId) {
+  const name = exName(exId);
+  const query = encodeURIComponent(name + " proper exercise form tutorial short");
+  return "https://www.youtube.com/results?search_query=" + query;
+}
 
 function usageMap() {
   const map = {};
@@ -445,7 +468,7 @@ function fmtShort(d) {
   return d.getDate() + " " + MONTHS_SHORT[d.getMonth()];
 }
 
-// ---------- Strength Stats, PR & 1RM ----------
+// ---------- Strength Stats, Plateau Detector, PR & 1RM ----------
 function e1rm(kg, reps) {
   if (reps <= 0 || kg <= 0) return 0;
   if (reps === 1) return kg;
@@ -493,11 +516,12 @@ function getPrevious(exId, excludeWorkoutId) {
   return [];
 }
 
-function getExerciseHistory(exId, limit) {
+function getExerciseHistory(exId, limit, excludeWorkoutId) {
   const hist = getHistory();
   const logs = [];
   for (let i = hist.length - 1; i >= 0; i--) {
     const w = hist[i];
+    if (excludeWorkoutId && w.id === excludeWorkoutId) continue;
     for (const ex of (w.exercises || [])) {
       if (ex.exId === exId && ex.sets && ex.sets.length > 0) {
         const d = workoutDate(w);
@@ -512,6 +536,20 @@ function getExerciseHistory(exId, limit) {
     if (limit && logs.length >= limit) break;
   }
   return logs;
+}
+
+function detectPlateau(exId, excludeWorkoutId) {
+  const recent = getExerciseHistory(exId, 3, excludeWorkoutId);
+  if (recent.length < 3) return false;
+  const type = exTypeOf(exId);
+  const s0 = getStats(recent[0].sets);
+  const s1 = getStats(recent[1].sets);
+  const s2 = getStats(recent[2].sets);
+
+  if (type === "reps" || type === "time") {
+    return (s0.maxReps > 0 && s0.maxReps <= s1.maxReps && s1.maxReps <= s2.maxReps);
+  }
+  return (s0.best1rm > 0 && s0.best1rm <= s1.best1rm + 0.1 && s1.best1rm <= s2.best1rm + 0.1);
 }
 
 function findPRs(exId, newSets, excludeWorkoutId) {
@@ -592,6 +630,173 @@ function workoutVolume(w) {
   return total;
 }
 
+// ---------- Strava × Hevy Flex Insights (Top MVP Lift + Volume Delta) ----------
+function getWorkoutFlexInsights(w) {
+  const unit = unitName().toUpperCase();
+  const curVol = workoutVolume(w);
+  const hist = getHistory().filter(item => item.id !== w.id);
+
+  // Compare against previous workout with volume > 0
+  let prevVol = 0;
+  for (let i = hist.length - 1; i >= 0; i--) {
+    const v = workoutVolume(hist[i]);
+    if (v > 0) {
+      prevVol = v;
+      break;
+    }
+  }
+
+  let deltaText = "FIRST LOGGED SESSION 🔥";
+  let deltaPositive = true;
+  if (prevVol > 0 && curVol > 0) {
+    const diffKg = curVol - prevVol;
+    const pct = Math.round((diffKg / prevVol) * 100);
+    if (diffKg >= 0) {
+      deltaText = "▲ +" + showWeight(diffKg) + " " + unit + " (+" + pct + "% VS LAST)";
+      deltaPositive = true;
+    } else {
+      deltaText = "▼ " + showWeight(Math.abs(diffKg)) + " " + unit + " (" + pct + "% VS LAST)";
+      deltaPositive = false;
+    }
+  }
+
+  // Find MVP (Best Lift of the Workout)
+  let mvp = null;
+  let bestScore = -1;
+  (w.exercises || []).forEach(function (ex) {
+    const type = exTypeOf(ex.exId);
+    const st = getStats(ex.sets);
+    const workingCount = (ex.sets || []).filter(s => s.type !== "W").length;
+    if (workingCount === 0) return;
+
+    const score = type === "weight" ? st.best1rm : st.maxReps;
+    if (score > bestScore) {
+      bestScore = score;
+      // Find top set reps at maxWeight
+      let topRepsAtMax = st.maxReps;
+      (ex.sets || []).forEach(s => {
+        if (s.type !== "W" && Number(s.kg) === st.maxWeight) {
+          topRepsAtMax = Math.max(topRepsAtMax, Number(s.reps) || 0);
+        }
+      });
+
+      mvp = {
+        exId: ex.exId,
+        name: exName(ex.exId),
+        muscle: exPrimaryMuscleOf(ex.exId),
+        equipment: exEquipmentOf(ex.exId),
+        setsCount: workingCount,
+        topSetText: type === "time"
+          ? (st.maxReps + " SEC HOLD")
+          : (type === "reps" ? (st.maxReps + " REPS") : (showWeight(st.maxWeight) + " " + unit + " × " + topRepsAtMax)),
+        est1rmText: type === "weight" ? (showWeight(st.best1rm) + " " + unit) : "BODYWEIGHT",
+        volumeText: type === "weight" ? (showWeight(st.totalVol) + " " + unit) : (workingCount + " SETS")
+      };
+    }
+  });
+
+  return {
+    deltaText: deltaText,
+    deltaPositive: deltaPositive,
+    mvp: mvp
+  };
+}
+
+// ---------- Unlockable Lifetime Achievements Engine ----------
+function getAchievements() {
+  const hist = getHistory();
+  const totalWorkouts = hist.length;
+  let lifetimeVolKg = 0;
+  let totalPrs = 0;
+  const weeks = {};
+
+  hist.forEach(function (w) {
+    lifetimeVolKg += workoutVolume(w);
+    totalPrs += (w.prs || []).length;
+    const d = workoutDate(w);
+    if (d) weeks[weekStart(d)] = true;
+  });
+
+  const nowWeek = weekStart(new Date());
+  let streak = 0;
+  let t = nowWeek;
+  if (!weeks[t]) t = prevWeek(t);
+  while (weeks[t]) {
+    streak++;
+    t = prevWeek(t);
+  }
+
+  const unit = unitName().toUpperCase();
+  const shownVol = Math.round(showWeight(lifetimeVolKg));
+
+  return [
+    {
+      id: "ach_first",
+      icon: "🔥",
+      title: "FIRST BLOOD",
+      desc: "Complete your 1st workout session",
+      unlocked: totalWorkouts >= 1,
+      progress: Math.min(totalWorkouts, 1) + " / 1"
+    },
+    {
+      id: "ach_regular",
+      icon: "⚡",
+      title: "IRON REGULAR",
+      desc: "Log 5 completed workout sessions",
+      unlocked: totalWorkouts >= 5,
+      progress: Math.min(totalWorkouts, 5) + " / 5"
+    },
+    {
+      id: "ach_dedicated",
+      icon: "🛡️",
+      title: "DEDICATED LIFTER",
+      desc: "Log 25 completed workout sessions",
+      unlocked: totalWorkouts >= 25,
+      progress: Math.min(totalWorkouts, 25) + " / 25"
+    },
+    {
+      id: "ach_10ton",
+      icon: "🏋️",
+      title: "10-TON CLUB",
+      desc: "Lift 10,000 KG total lifetime volume",
+      unlocked: lifetimeVolKg >= 10000,
+      progress: shownVol.toLocaleString() + " / " + showWeight(10000).toLocaleString() + " " + unit
+    },
+    {
+      id: "ach_50ton",
+      icon: "🦾",
+      title: "50-TON TITAN",
+      desc: "Lift 50,000 KG total lifetime volume",
+      unlocked: lifetimeVolKg >= 50000,
+      progress: shownVol.toLocaleString() + " / " + showWeight(50000).toLocaleString() + " " + unit
+    },
+    {
+      id: "ach_100ton",
+      icon: "👑",
+      title: "100-TON APEX",
+      desc: "Lift 100,000 KG total lifetime volume",
+      unlocked: lifetimeVolKg >= 100000,
+      progress: shownVol.toLocaleString() + " / " + showWeight(100000).toLocaleString() + " " + unit
+    },
+    {
+      id: "ach_prs",
+      icon: "🏆",
+      title: "RECORD BREAKER",
+      desc: "Break 5 Personal Records (PRs)",
+      unlocked: totalPrs >= 5,
+      progress: Math.min(totalPrs, 5) + " / 5 PRs"
+    },
+    {
+      id: "ach_streak",
+      icon: "💎",
+      title: "STREAK MASTER",
+      desc: "Maintain a 3-Week training streak",
+      unlocked: streak >= 3,
+      progress: Math.min(streak, 3) + " / 3 Weeks"
+    }
+  ];
+}
+
 function calculateMuscleWorkload(workouts) {
   const workload = {};
   (workouts || []).forEach(function (w) {
@@ -617,10 +822,9 @@ function calculateMuscleWorkload(workouts) {
   return workload;
 }
 
-// ---------- Muscle Recovery % (Freshness / Readiness Engine) ----------
 function calculateMuscleRecovery() {
   const now = Date.now();
-  const lookbackMs = 96 * 3600 * 1000; // 4 days window
+  const lookbackMs = 96 * 3600 * 1000;
   const largeMuscles = new Set(["Chest", "Back", "Quads", "Hamstrings", "Glutes"]);
   const trackedMuscles = MUSCLES.filter(m => m !== "Other");
   const fatigueScore = {};

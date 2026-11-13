@@ -1,10 +1,9 @@
-// ============ app.js (PART 1/2) : STRVEX CORE ENGINE, COCKPIT, PLATES & CARDS ============
+// ============ app.js (PART 1/2) : STRVEX CORE, MUSIC DOCK, LIVE PR & COCKPIT ============
 
 function $(id) {
   return document.getElementById(id);
 }
 
-// Safe HTML escaping to prevent XSS on any user/imported strings
 function esc(str) {
   return String(str === null || str === undefined ? "" : str)
     .replace(/&/g, "&amp;")
@@ -19,24 +18,27 @@ const TABS = ["workout", "history", "progress", "more"];
 let currentTab = "workout";
 let workoutActive = false;
 let workoutStart = 0;
-let editingWorkoutId = null; // Non-null when editing a past workout from History
-let editingRoutineId = null; // Non-null when editing a routine template
+let editingWorkoutId = null;
+let editingRoutineId = null;
 let clockId = null;
 let restEnd = 0;
 let restId = null;
 let progressExId = "";
 let progressMetric = "weight";
-let progressRangeDays = "all"; // "30" | "90" | "180" | "all"
+let progressRangeDays = "all";
 let calYear = new Date().getFullYear();
 let calMonth = new Date().getMonth();
 let selectedCalDay = null;
-let historyVisibleCount = 15; // Pagination for 400+ workouts
-let sheetMode = "pick"; // pick | swap | create-add | create | edit
+let historyVisibleCount = 15;
+let sheetMode = "pick";
 let editingId = null;
 let swappingCard = null;
 let formType = "weight";
 let wakeLock = null;
 let isSummaryFromHistory = false;
+let activeSummaryData = null;
+let activeFlexMode = "carbon"; // "carbon" | "mvp" | "photo"
+let uploadedFlexPhotoDataUrl = null;
 let lastWindowWidth = window.innerWidth;
 
 // Filter States
@@ -47,7 +49,91 @@ let libFilterMuscle = "All";
 let libFilterEquipment = "All";
 let selectedSecondaryMuscles = new Set();
 
-// ---------- Web Audio API Singleton (Offline Beep) ----------
+// Onboarding temporary state
+let onbUnit = "kg";
+let onbTheme = "dark";
+
+// ---------- Theme & RPE Column Visibility ----------
+function applyTheme(themeMode) {
+  const mode = themeMode === "light" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", mode);
+  const metaTheme = document.querySelector('meta[name="theme-color"]');
+  if (metaTheme) {
+    metaTheme.setAttribute("content", mode === "light" ? "#ebe6dc" : "#121211");
+  }
+  if (currentTab === "progress" && typeof renderProgressChart === "function") {
+    renderProgressChart();
+    renderBodyWeight();
+  }
+}
+
+function applyRpeVisibility(showRpe) {
+  const ws = $("workoutScreen");
+  if (!ws) return;
+  ws.classList.toggle("hide-rpe", !showRpe);
+}
+
+// ---------- Header Athlete Name & Level Badge ----------
+function updateHeaderAthleteBadge() {
+  if (typeof getAthleteProfile !== "function") return;
+  const prof = getAthleteProfile();
+  const label = $("headerAthleteLabel");
+  if (label) {
+    label.textContent = prof.name + " // LVL " + prof.level;
+  }
+}
+
+// ---------- First-Time Onboarding & Quick Guide Controller ----------
+function openOnboardingModal() {
+  const s = getSettings();
+  onbUnit = s.unit || "kg";
+  onbTheme = s.theme || "dark";
+
+  if ($("onbNameInput")) $("onbNameInput").value = s.userName || "";
+  if ($("onbUnitSeg")) setSegmented($("onbUnitSeg"), onbUnit);
+  if ($("onbThemeSeg")) setSegmented($("onbThemeSeg"), onbTheme);
+  if ($("onbTrackSelect")) $("onbTrackSelect").value = s.defaultTrack || "all";
+
+  $("onboardingBackdrop").classList.remove("hidden");
+  $("onboardingModal").classList.remove("hidden");
+}
+
+function closeOnboardingModal() {
+  $("onboardingBackdrop").classList.add("hidden");
+  $("onboardingModal").classList.add("hidden");
+}
+
+function saveOnboarding() {
+  const s = getSettings();
+  const oldUnit = s.unit;
+  const nameVal = $("onbNameInput") ? $("onbNameInput").value.trim() : "";
+  const trackVal = $("onbTrackSelect") ? $("onbTrackSelect").value : "all";
+
+  s.userName = nameVal.slice(0, 20);
+  s.unit = onbUnit;
+  s.theme = onbTheme;
+  s.defaultTrack = trackVal;
+  s.onboarded = true;
+  saveSettings(s);
+
+  applyTheme(s.theme);
+  if (oldUnit !== s.unit) {
+    syncActiveWorkoutUnits(oldUnit, s.unit);
+  }
+  routineCategoryFilter = trackVal || "all";
+  updateHeaderAthleteBadge();
+  closeOnboardingModal();
+  renderTab(currentTab);
+  showToast("Welcome to STRVEX, " + (s.userName || "Athlete") + "!");
+}
+
+if ($("headerAthleteBtn")) $("headerAthleteBtn").addEventListener("click", openOnboardingModal);
+if ($("openOnboardingBtn")) $("openOnboardingBtn").addEventListener("click", openOnboardingModal);
+if ($("onbCloseBtn")) $("onbCloseBtn").addEventListener("click", closeOnboardingModal);
+if ($("onboardingBackdrop")) $("onboardingBackdrop").addEventListener("click", closeOnboardingModal);
+if ($("onbSaveBtn")) $("onbSaveBtn").addEventListener("click", saveOnboarding);
+
+// ---------- Web Audio API (Offline Beep & PR Victory Fanfare) ----------
 let audioCtx = null;
 function getAudioCtx() {
   const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -79,6 +165,78 @@ function playTimerFinishedBeep() {
   playBeep(880, "sine", 0.12);
   setTimeout(function () { playBeep(880, "sine", 0.12); }, 150);
   setTimeout(function () { playBeep(1174.66, "sine", 0.35); }, 320);
+}
+
+function playPrFanfare() {
+  playBeep(587.33, "triangle", 0.12);
+  setTimeout(function () { playBeep(783.99, "triangle", 0.12); }, 120);
+  setTimeout(function () { playBeep(987.77, "triangle", 0.14); }, 240);
+  setTimeout(function () { playBeep(1174.66, "triangle", 0.38); }, 370);
+}
+
+let livePrTimerId = null;
+function triggerLivePrCelebration(exNameStr, prLabel) {
+  playPrFanfare();
+  if (navigator.vibrate) navigator.vibrate([120, 60, 180]);
+  const banner = $("livePrBanner");
+  const textEl = $("livePrText");
+  if (!banner || !textEl) return;
+  textEl.textContent = "🏆 NEW LIVE PR! " + exNameStr.toUpperCase() + " — " + prLabel;
+  banner.classList.remove("hidden");
+  clearTimeout(livePrTimerId);
+  livePrTimerId = setTimeout(function () {
+    banner.classList.add("hidden");
+  }, 4500);
+}
+
+// ---------- In-Workout Music & Spotify Dock Controller ----------
+function initMusicDock() {
+  const toggleBtn = $("musicToggleBtn");
+  const dock = $("musicDock");
+  const iframe = $("spotifyIframe");
+  const genreContainer = $("musicGenreChips");
+  const customBtn = $("customSpotifyBtn");
+
+  if (!toggleBtn || !dock || !iframe) return;
+
+  toggleBtn.addEventListener("click", function () {
+    const isHidden = dock.classList.contains("hidden");
+    dock.classList.toggle("hidden", !isHidden);
+    if (isHidden && !iframe.getAttribute("src")) {
+      iframe.src = getSettings().spotifyEmbedUrl;
+    }
+  });
+
+  if (genreContainer) {
+    genreContainer.addEventListener("click", function (e) {
+      const chip = e.target.closest(".filter-chip");
+      if (!chip || !chip.dataset.embed) return;
+      genreContainer.querySelectorAll(".filter-chip").forEach(c => c.classList.remove("active"));
+      chip.classList.add("active");
+      iframe.src = chip.dataset.embed;
+      const s = getSettings();
+      s.spotifyEmbedUrl = chip.dataset.embed;
+      saveSettings(s);
+    });
+  }
+
+  if (customBtn) {
+    customBtn.addEventListener("click", function () {
+      const rawUrl = prompt("Paste any Spotify Playlist or Track link (e.g. https://open.spotify.com/playlist/...):", "");
+      if (!rawUrl || !rawUrl.trim()) return;
+      const m = rawUrl.match(/spotify\.com\/(playlist|album|track)\/([a-zA-Z0-9]+)/);
+      if (!m) {
+        alert("Please paste a valid Spotify playlist, album, or track URL.");
+        return;
+      }
+      const embedUrl = "https://open.spotify.com/embed/" + m[1] + "/" + m[2] + "?utm_source=generator&theme=0";
+      iframe.src = embedUrl;
+      const s = getSettings();
+      s.spotifyEmbedUrl = embedUrl;
+      saveSettings(s);
+      showToast("Custom Spotify playlist loaded 🎵");
+    });
+  }
 }
 
 // ---------- Screen Wake Lock API ----------
@@ -133,10 +291,19 @@ function bindSegmented(el, onChange) {
   });
 }
 
-// ---------- Escape Key Modal Handler ----------
+if ($("onbUnitSeg")) bindSegmented($("onbUnitSeg"), v => { onbUnit = v; });
+if ($("onbThemeSeg")) {
+  bindSegmented($("onbThemeSeg"), v => {
+    onbTheme = v;
+    applyTheme(v);
+  });
+}
+
 document.addEventListener("keydown", function (e) {
   if (e.key !== "Escape") return;
-  if ($("plateModal") && !$("plateModal").classList.contains("hidden")) {
+  if ($("onboardingModal") && !$("onboardingModal").classList.contains("hidden")) {
+    closeOnboardingModal();
+  } else if ($("plateModal") && !$("plateModal").classList.contains("hidden")) {
     closePlateCalculator();
   } else if ($("exInfoModal") && !$("exInfoModal").classList.contains("hidden")) {
     closeExerciseInfo();
@@ -213,14 +380,9 @@ function bindRoutineCategoryFilters() {
 
 function renderWorkoutTab() {
   updateHeroStats();
+  updateHeaderAthleteBadge();
   syncRoutineCategoryChips();
 
-  const totalExercises = getExercises().length;
-  if ($("headerExerciseCount")) {
-    $("headerExerciseCount").textContent = totalExercises + " EXERCISES";
-  }
-
-  // Active workout resume banner with 1-tap DISCARD button
   const resume = $("resumeCard");
   resume.innerHTML = "";
   if (workoutActive) {
@@ -244,7 +406,6 @@ function renderWorkoutTab() {
     updateClock();
   }
 
-  // Routine templates list: USER'S CUSTOM ROUTINES FIRST
   const list = $("routineList");
   list.innerHTML = "";
   const routines = getRoutines();
@@ -415,7 +576,6 @@ if ($("prevEditBtn")) {
 // ---------- Barbell Plate Calculator Modal Controller ----------
 function openPlateCalculator(initialWeight) {
   const unit = unitName();
-  const settings = getSettings();
   $("plateUnitLabel").textContent = unit.toUpperCase();
 
   const defaultTarget = initialWeight && Number(initialWeight) > 0
@@ -478,7 +638,6 @@ function updatePlateCalculatorView() {
     return;
   }
 
-  // Color & height map for visual plate disks
   function plateStyle(p) {
     if (p >= 20 && unit === "kg" || p >= 45 && unit === "lbs") return { bg: "#1d4ed8", h: 58 };
     if (p >= 15 && unit === "kg" || p >= 35 && unit === "lbs") return { bg: "#eab308", h: 52 };
@@ -504,7 +663,6 @@ function updatePlateCalculatorView() {
   });
   box.appendChild(visualBar);
 
-  // Count breakdown (e.g. "20 KG × 1, 10 KG × 1, 2.5 KG × 1 per side")
   const counts = {};
   res.perSide.forEach(p => { counts[p] = (counts[p] || 0) + 1; });
   const breakdownStr = Object.keys(counts)
@@ -533,13 +691,17 @@ if ($("openPlateCalcSettingsBtn")) {
   });
 }
 
-// ---------- Exercise Form Guide & History Modal Controller (ⓘ INFO) ----------
+// ---------- Exercise Form Guide, YouTube Demo & History Modal Controller ----------
 function openExerciseInfo(exId) {
   const ex = getExercise(exId);
   if (!ex) return;
 
   $("exInfoEquip").textContent = (exEquipmentOf(exId) || "EQUIPMENT").toUpperCase();
   $("exInfoTitle").textContent = ex.name;
+
+  if ($("exInfoYoutubeBtn") && typeof getExerciseYoutubeUrl === "function") {
+    $("exInfoYoutubeBtn").href = getExerciseYoutubeUrl(exId);
+  }
 
   const pills = $("exInfoMuscles");
   pills.innerHTML = "";
@@ -671,6 +833,8 @@ function syncCockpitModeUI() {
   const modeTag = $("workoutModeTag");
   const finishBtn = $("finishBtn");
   const miniLabel = $("miniHudLabel");
+  applyRpeVisibility(getSettings().showRpe);
+
   if (editingRoutineId) {
     if (modeTag) modeTag.textContent = "ROUTINE EDIT";
     if (finishBtn) finishBtn.textContent = "SAVE ROUTINE";
@@ -824,7 +988,6 @@ $("workoutScreen").addEventListener("click", saveDraft);
 $("workoutScreen").addEventListener("input", saveDraft);
 $("workoutScreen").addEventListener("change", saveDraft);
 
-// ---------- Live Unit Conversion for Active Workout ----------
 function syncActiveWorkoutUnits(oldUnit, newUnit) {
   if (!workoutActive || oldUnit === newUnit) return;
   document.querySelectorAll("#exerciseList .exCard").forEach(function (card) {
@@ -840,6 +1003,11 @@ function syncActiveWorkoutUnits(oldUnit, newUnit) {
     const strip = card.querySelector(".auto-target-strip");
     if (strip) strip.textContent = generateAutoTargetHint(exId, targetReps);
 
+    const stepWtBtn = card.querySelector(".step-wt-btn");
+    if (stepWtBtn) {
+      stepWtBtn.textContent = "+" + (newUnit === "lbs" ? "5 LB" : "2.5 KG");
+    }
+
     const previous = getPrevious(exId, editingWorkoutId);
     card.querySelectorAll(".setRow").forEach(function (row, i) {
       const kgInput = row.querySelector(".kgInput");
@@ -849,16 +1017,15 @@ function syncActiveWorkoutUnits(oldUnit, newUnit) {
       const prev = previous[i];
       const prevSpan = row.querySelector(".set-prev-hint");
       if (prev && prevSpan) {
-        if (type === "time") prevSpan.textContent = prev.reps + " sec";
-        else if (type === "reps") prevSpan.textContent = prev.reps + " reps";
-        else prevSpan.textContent = showWeight(prev.kg) + "×" + prev.reps;
+        if (type === "time") prevSpan.textContent = prev.reps + "s ↵";
+        else if (type === "reps") prevSpan.textContent = prev.reps + "r ↵";
+        else prevSpan.textContent = showWeight(prev.kg) + "×" + prev.reps + " ↵";
       }
     });
   });
   saveDraft();
 }
 
-// ---------- Start / Edit / Repeat / Finish / Discard Session ----------
 function startWorkout() {
   if (workoutActive) {
     openWorkoutScreen();
@@ -988,7 +1155,6 @@ function endWorkoutUI() {
   updateMiniBar();
 }
 
-// ---------- Smart RPE-Aware Double-Progression Coach ----------
 function generateAutoTargetHint(exId, routineTargetReps) {
   const type = exTypeOf(exId);
   const prevSets = getPrevious(exId, editingWorkoutId);
@@ -1002,15 +1168,23 @@ function generateAutoTargetHint(exId, routineTargetReps) {
     return "💡 First Session: Choose a controlled weight for " + (routineTargetReps || "8-10") + " reps to set your baseline.";
   }
 
+  const isPlateau = typeof detectPlateau === "function" && detectPlateau(exId, editingWorkoutId);
+
   if (type === "time") {
     let maxSec = 0;
     workingSets.forEach(s => { if (Number(s.reps) > maxSec) maxSec = Number(s.reps); });
+    if (isPlateau) {
+      return "🚨 Plateau Alert: Stuck at " + maxSec + "s for 3 sessions! Add 1 extra set or slow down your breathing today.";
+    }
     return "💡 Target: Last longest hold was " + maxSec + " sec. Aim for " + (maxSec + 5) + " sec today!";
   }
 
   if (type === "reps") {
     let maxReps = 0;
     workingSets.forEach(s => { if (Number(s.reps) > maxReps) maxReps = Number(s.reps); });
+    if (isPlateau) {
+      return "🚨 Plateau Alert: Stuck at " + maxReps + " reps for 3 sessions! Try a 2-second pause at the top or add a Drop Set [D].";
+    }
     return "💡 Target: Last best was " + maxReps + " reps. Aim for " + (maxReps + 1) + " reps today!" + repRangeLabel;
   }
 
@@ -1032,7 +1206,11 @@ function generateAutoTargetHint(exId, routineTargetReps) {
     ? Math.round(Number(topWeight) * 2.20462)
     : showWeight(topWeight);
 
-  // If RPE was 10 (all-out grinder) or reps < 10, hold weight and build reps/control first
+  if (isPlateau) {
+    return "🚨 Plateau Alert: Stuck at " + shownLastWeight + " " + unit + " × " + topReps +
+      " for 3 sessions! Tap ⇄ SWAP for a dumbbell/cable variation or add 1 Drop Set [D] today.";
+  }
+
   if (topRpe && topRpe >= 10) {
     return "💡 Target: Last set was RPE 10 (" + shownLastWeight + " " + unit + " × " + topReps +
       "). Keep " + shownLastWeight + " " + unit + " today and aim for smoother reps (RPE 8-9).";
@@ -1064,11 +1242,11 @@ function renumberCardIndices() {
 function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNotAppend) {
   const ex = getExercise(exId);
   if (!ex) return null;
-  const type = exTypeOf(exId); // "weight" | "reps" | "time"
+  const type = exTypeOf(exId);
   const isNoWeight = (type === "reps" || type === "time");
   const previous = getPrevious(exId, editingWorkoutId);
   const pinnedNote = getExerciseNote(exId);
-  const customRestSec = getExerciseCustomRest(exId);
+  const historicalBest = getStats(getAllSets(exId, editingWorkoutId));
 
   const card = document.createElement("div");
   card.className = "exCard" + (isNoWeight ? " repsOnly" : "") + (isSuperset ? " isSuperset" : "");
@@ -1076,6 +1254,7 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
   card.dataset.targetreps = targetReps || "";
 
   const repColHeader = type === "time" ? "SEC" : "REPS";
+  const stepWtLabel = "+" + (unitName() === "lbs" ? "5 LB" : "2.5 KG");
 
   card.innerHTML =
     '<div class="exHead">' +
@@ -1086,7 +1265,7 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
         '</div>' +
       '</div>' +
       '<div class="exActions">' +
-        '<button class="info-ex-btn" title="Form Guide & Exercise History">ⓘ INFO</button>' +
+        '<button class="info-ex-btn" title="Form Guide, YouTube Demo & Exercise History">ⓘ INFO</button>' +
         '<button class="swap-ex-btn" title="Swap Exercise">⇄ SWAP</button>' +
         '<button class="action-icon-btn moveUpBtn" title="Move Up" aria-label="Move Exercise Up">▲</button>' +
         '<button class="action-icon-btn moveDownBtn" title="Move Down" aria-label="Move Exercise Down">▼</button>' +
@@ -1097,16 +1276,18 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
         '<button class="util-pill-btn rest-pill-btn" title="Set Custom Rest Timer for this Exercise"></button>' +
         (isNoWeight ? '' : '<button class="util-pill-btn plate-pill-btn" title="Open Barbell Plate Calculator">🏋️ PLATES</button>') +
         (isNoWeight ? '' : '<button class="util-pill-btn warmup-pill-btn" title="Generate Progressive Warm-Up Sets">🔥 + WARM-UP</button>') +
+        (isNoWeight ? '' : '<button class="util-pill-btn step-wt-btn" title="Quick add weight to active set">' + esc(stepWtLabel) + '</button>') +
+        '<button class="util-pill-btn step-rep-btn" title="Quick add +1 rep/sec to active set">+1 ' + repColHeader + '</button>' +
       '</div>' +
       '<input type="text" class="ex-pinned-note" placeholder="📌 Pinned note (e.g. Seat #4, grip width)...">' +
     '</div>' +
     '<div class="auto-target-strip"></div>' +
     '<div class="setHead">' +
       '<span>SET</span>' +
-      '<span>PREVIOUS</span>' +
+      '<span>PREV (TAP)</span>' +
       (isNoWeight ? '' : '<span>' + esc(unitName().toUpperCase()) + '</span>') +
       '<span>' + repColHeader + '</span>' +
-      '<span>RPE</span>' +
+      '<span class="rpe-col">RPE</span>' +
       '<span>✓</span>' +
       '<span></span>' +
     '</div>' +
@@ -1114,7 +1295,10 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
     '<button class="addSetBtn">+ ADD SET</button>';
 
   card.querySelector("h3").textContent = ex.name;
-  card.querySelector(".auto-target-strip").textContent = generateAutoTargetHint(exId, targetReps);
+  const targetStrip = card.querySelector(".auto-target-strip");
+  const hintText = generateAutoTargetHint(exId, targetReps);
+  targetStrip.textContent = hintText;
+  if (hintText.startsWith("🚨")) targetStrip.classList.add("plateau-alert");
 
   const noteInput = card.querySelector(".ex-pinned-note");
   noteInput.value = pinnedNote;
@@ -1142,6 +1326,46 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
 
   const setsDiv = card.querySelector(".sets");
 
+  function getActiveOrFirstUncheckedRow() {
+    const rows = setsDiv.querySelectorAll(".setRow");
+    for (let i = 0; i < rows.length; i++) {
+      if (!rows[i].querySelector(".doneBox").classList.contains("checked")) return rows[i];
+    }
+    return rows[rows.length - 1] || null;
+  }
+
+  const stepWtBtn = card.querySelector(".step-wt-btn");
+  if (stepWtBtn) {
+    stepWtBtn.addEventListener("click", function () {
+      const targetRow = getActiveOrFirstUncheckedRow();
+      if (!targetRow) return;
+      const kgInput = targetRow.querySelector(".kgInput");
+      if (!kgInput) return;
+      const rowIndex = Array.prototype.indexOf.call(setsDiv.children, targetRow);
+      const prev = previous[rowIndex >= 0 ? rowIndex : 0];
+      let curVal = kgInput.value.trim() !== "" ? Number(kgInput.value) : (prev && prev.kg ? showWeight(prev.kg) : 0);
+      const step = unitName() === "lbs" ? 5 : 2.5;
+      kgInput.value = Math.round((curVal + step) * 10) / 10;
+      saveDraft();
+    });
+  }
+
+  const stepRepBtn = card.querySelector(".step-rep-btn");
+  if (stepRepBtn) {
+    stepRepBtn.addEventListener("click", function () {
+      const targetRow = getActiveOrFirstUncheckedRow();
+      if (!targetRow) return;
+      const repsInput = targetRow.querySelector(".repsInput");
+      if (!repsInput) return;
+      const rowIndex = Array.prototype.indexOf.call(setsDiv.children, targetRow);
+      const prev = previous[rowIndex >= 0 ? rowIndex : 0];
+      let curReps = repsInput.value.trim() !== "" ? Number(repsInput.value) : (prev && prev.reps ? Number(prev.reps) : 0);
+      const inc = type === "time" ? 5 : 1;
+      repsInput.value = Math.max(1, Math.round(curReps + inc));
+      saveDraft();
+    });
+  }
+
   function renumberSets() {
     let n = 0;
     setsDiv.querySelectorAll(".setRow").forEach(function (row, i) {
@@ -1156,10 +1380,14 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
       const prev = previous[i];
       const prevSpan = row.querySelector(".set-prev-hint");
       if (prev) {
-        if (type === "time") prevSpan.textContent = prev.reps + " sec";
-        else if (type === "reps") prevSpan.textContent = prev.reps + " reps";
-        else prevSpan.textContent = showWeight(prev.kg) + "×" + prev.reps + (prev.rpe ? " @" + prev.rpe : "");
+        prevSpan.classList.add("clickable");
+        prevSpan.title = "Tap to copy previous weight & reps into this set";
+        if (type === "time") prevSpan.textContent = prev.reps + "s ↵";
+        else if (type === "reps") prevSpan.textContent = prev.reps + "r ↵";
+        else prevSpan.textContent = showWeight(prev.kg) + "×" + prev.reps + " ↵";
       } else {
+        prevSpan.classList.remove("clickable");
+        prevSpan.title = "";
         prevSpan.textContent = targetReps ? ("Goal: " + targetReps) : "—";
       }
     });
@@ -1179,6 +1407,19 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
       '<button class="rpeBtn" title="Tap to cycle RPE Effort (7 to 10)">—</button>' +
       '<button class="doneBox" aria-label="Complete Set">✓</button>' +
       '<button class="delSetBtn" title="Delete Set" aria-label="Delete Set">✕</button>';
+
+    const prevSpan = row.querySelector(".set-prev-hint");
+    prevSpan.addEventListener("click", function () {
+      const rowIndex = Array.prototype.indexOf.call(setsDiv.children, row);
+      const prev = previous[rowIndex >= 0 ? rowIndex : 0];
+      if (!prev) return;
+      const kgInput = row.querySelector(".kgInput");
+      const repsInput = row.querySelector(".repsInput");
+      if (kgInput && prev.kg !== undefined) kgInput.value = showWeight(prev.kg);
+      if (repsInput && prev.reps !== undefined) repsInput.value = prev.reps;
+      saveDraft();
+      showToast("Copied previous set ✓");
+    });
 
     const rpeBtn = row.querySelector(".rpeBtn");
     function syncRpeBtn() {
@@ -1243,8 +1484,32 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
 
         done.classList.add("checked");
         row.classList.add("done");
-        if (navigator.vibrate) navigator.vibrate(14);
-        playBeep(700, "sine", 0.08);
+
+        // Instant Live PR Detection on Set Completion!
+        let brokeLivePr = false;
+        if (row.dataset.type !== "W") {
+          const setKg = kgInput ? toKg(weightVal) : 0;
+          if (type === "weight" && historicalBest.maxWeight > 0) {
+            if (setKg > historicalBest.maxWeight + 0.05) {
+              brokeLivePr = true;
+              historicalBest.maxWeight = setKg;
+              triggerLivePrCelebration(ex.name, weightVal + " " + unitName().toUpperCase() + " × " + repsVal);
+            } else if (e1rm(setKg, repsVal) > historicalBest.best1rm + 0.05) {
+              brokeLivePr = true;
+              historicalBest.best1rm = e1rm(setKg, repsVal);
+              triggerLivePrCelebration(ex.name, "NEW 1RM (" + showWeight(historicalBest.best1rm) + " " + unitName().toUpperCase() + ")");
+            }
+          } else if (isNoWeight && historicalBest.maxReps > 0 && repsVal > historicalBest.maxReps) {
+            brokeLivePr = true;
+            historicalBest.maxReps = repsVal;
+            triggerLivePrCelebration(ex.name, repsVal + (type === "time" ? " SEC HOLD" : " REPS"));
+          }
+        }
+
+        if (!brokeLivePr) {
+          if (navigator.vibrate) navigator.vibrate(14);
+          playBeep(700, "sine", 0.08);
+        }
 
         const nextCard = card.nextElementSibling;
         if (card.classList.contains("isSuperset") && nextCard) {
@@ -1293,7 +1558,6 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
     renumberSets();
   }
 
-  // Plate Calculator Button on Card
   const plateBtn = card.querySelector(".plate-pill-btn");
   if (plateBtn) {
     plateBtn.addEventListener("click", function () {
@@ -1308,7 +1572,6 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
     });
   }
 
-  // 1-Tap Warm-up Generator Button on Card
   const warmupBtn = card.querySelector(".warmup-pill-btn");
   if (warmupBtn) {
     warmupBtn.addEventListener("click", function () {
@@ -1336,7 +1599,6 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
         showToast("Working weight is light enough to start directly!");
         return;
       }
-      // Remove any existing unchecked warm-up sets before inserting fresh ones
       card.querySelectorAll(".setRow").forEach(function (r) {
         if (r.dataset.type === "W" && !r.querySelector(".doneBox").classList.contains("checked")) {
           r.remove();
@@ -1410,16 +1672,16 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
   }
   return card;
 }
-// ============ app.js (PART 2/2) : SUMMARY, PICKER, HISTORY, RECOVERY, CSV & INIT ============
+// ============ app.js (PART 2/2) : FLEX STUDIO, PHOTO OVERLAY, ACHIEVEMENTS & INIT ============
 
-// ---------- Full Anatomical SVG Body Map Engine (Direct vs Secondary Aware) ----------
-function renderBodyMapSvg(containerId, workloadMap, isBoneTheme) {
+function renderBodyMapSvg(containerId, workloadMap, isDarkCard) {
   const container = $(containerId);
   if (!container) return;
   workloadMap = workloadMap || {};
 
-  const baseFill = isBoneTheme ? "#cfc8b8" : "#252522";
-  const strokeColor = isBoneTheme ? "#121211" : "#3d3d38";
+  const isLightMode = !isDarkCard && document.documentElement.getAttribute("data-theme") === "light";
+  const baseFill = isLightMode ? "#cfc8b8" : "#252522";
+  const strokeColor = isLightMode ? "#121211" : "#3d3d38";
   const flame = "#ff4422";
   const brass = "#d4b483";
 
@@ -1481,13 +1743,24 @@ function renderBodyMapSvg(containerId, workloadMap, isBoneTheme) {
     '</div>';
 }
 
-// ---------- Workout Summary Modal Logic ----------
+// =====================================================
+//  STRAVA × HEVY 3-MODE FLEX STUDIO & STORY EXPORTER
+// =====================================================
 function buildSummaryFromWorkout(w) {
   const workloadMap = calculateMuscleWorkload([w]);
+  const insights = typeof getWorkoutFlexInsights === "function"
+    ? getWorkoutFlexInsights(w)
+    : { deltaText: "SESSION COMPLETE", deltaPositive: true, mvp: null };
+
   let totalSets = 0;
+  const exerciseLines = [];
+
   (w.exercises || []).forEach(function (ex) {
-    (ex.sets || []).forEach(function (s) {
-      if (s.type !== "W") totalSets++;
+    const working = (ex.sets || []).filter(s => s.type !== "W");
+    totalSets += working.length;
+    exerciseLines.push({
+      name: exName(ex.exId),
+      setsCount: working.length
     });
   });
 
@@ -1509,18 +1782,58 @@ function buildSummaryFromWorkout(w) {
     volume: workoutVolume(w),
     totalSets: totalSets,
     muscleMap: workloadMap,
-    prs: prs
+    exerciseLines: exerciseLines,
+    prs: prs,
+    deltaText: insights.deltaText,
+    mvp: insights.mvp
   };
+}
+
+function switchFlexMode(mode) {
+  activeFlexMode = mode || "carbon";
+  if ($("flexModeSeg")) setSegmented($("flexModeSeg"), activeFlexMode);
+  if ($("flexCardCarbon")) $("flexCardCarbon").classList.toggle("hidden", activeFlexMode !== "carbon");
+  if ($("flexCardMvp")) $("flexCardMvp").classList.toggle("hidden", activeFlexMode !== "mvp");
+  if ($("flexCardPhoto")) $("flexCardPhoto").classList.toggle("hidden", activeFlexMode !== "photo");
+}
+
+if ($("flexModeSeg")) {
+  bindSegmented($("flexModeSeg"), function (v) {
+    switchFlexMode(v);
+  });
+}
+
+if ($("flexPhotoInput")) {
+  $("flexPhotoInput").addEventListener("change", function () {
+    const file = $("flexPhotoInput").files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function () {
+      uploadedFlexPhotoDataUrl = reader.result;
+      const bg = $("photoOverlayBg");
+      if (bg) bg.style.backgroundImage = 'url("' + uploadedFlexPhotoDataUrl + '")';
+      showToast("Gym photo applied to Flex Card 📷");
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 function showSummaryModal(summaryData, fromHistory) {
   isSummaryFromHistory = !!fromHistory;
+  activeSummaryData = summaryData;
+  const unit = unitName().toUpperCase();
+  const prof = typeof getAthleteProfile === "function" ? getAthleteProfile() : { name: "ATHLETE", level: 1 };
+  const volText = showWeight(summaryData.volume).toLocaleString() + " " + unit;
 
+  // 1. Populate Carbon Flex Card
+  if ($("flexAthleteBadge")) $("flexAthleteBadge").textContent = prof.name + " · LVL " + prof.level;
   $("sumTitle").textContent = summaryData.title;
-  $("sumDate").textContent = summaryData.date + " · DURATION " + summaryData.durationMin + " MIN";
+  $("sumDate").textContent = summaryData.date.toUpperCase() + " · " + summaryData.durationMin + " MIN";
+  if ($("flexGiantVolume")) $("flexGiantVolume").textContent = volText;
+  if ($("flexDeltaPill")) $("flexDeltaPill").textContent = summaryData.deltaText || "SESSION VERIFIED";
 
   $("sumTiles").innerHTML =
-    '<div class="ticket-metric-cell"><small>Total Volume</small><strong>' + esc(showWeight(summaryData.volume) + " " + unitName().toUpperCase()) + '</strong></div>' +
+    '<div class="ticket-metric-cell"><small>Duration</small><strong>' + esc(summaryData.durationMin + " MIN") + '</strong></div>' +
     '<div class="ticket-metric-cell"><small>Working Sets</small><strong>' + esc(summaryData.totalSets) + '</strong></div>' +
     '<div class="ticket-metric-cell"><small>PRs Broken</small><strong>' + esc(summaryData.prs.length) + '</strong></div>';
 
@@ -1531,24 +1844,15 @@ function showSummaryModal(summaryData, fromHistory) {
   const muscles = Object.keys(summaryData.muscleMap).sort((a, b) => {
     return (summaryData.muscleMap[b].total || 0) - (summaryData.muscleMap[a].total || 0);
   });
-
-  if (muscles.length === 0) {
-    mList.innerHTML = '<span class="ticket-badge">No working sets logged</span>';
-  } else {
-    muscles.forEach(function (m) {
-      const entry = summaryData.muscleMap[m];
-      const badge = document.createElement("span");
-      badge.className = "ticket-badge";
-      if (entry.direct > 0 && entry.indirect > 0) {
-        badge.textContent = m + ": " + entry.direct + " direct + " + entry.indirect + " assist";
-      } else if (entry.direct > 0) {
-        badge.textContent = m + ": " + entry.direct + " sets";
-      } else {
-        badge.textContent = m + ": " + entry.indirect + " assist";
-      }
-      mList.appendChild(badge);
-    });
-  }
+  muscles.forEach(function (m) {
+    const entry = summaryData.muscleMap[m];
+    const badge = document.createElement("span");
+    badge.className = "ticket-badge";
+    badge.textContent = entry.direct > 0
+      ? (m + " (" + entry.direct + " sets)")
+      : (m + " (" + entry.indirect + " assist)");
+    mList.appendChild(badge);
+  });
 
   const prSection = $("sumPrSection");
   const prList = $("sumPrs");
@@ -1570,7 +1874,30 @@ function showSummaryModal(summaryData, fromHistory) {
     prSection.classList.add("hidden");
   }
 
-  $("sumDoneBtn").querySelector("span").textContent = isSummaryFromHistory ? "RETURN TO HISTORY" : "VIEW HISTORY";
+  // 2. Populate MVP Best Lift Card
+  const mvp = summaryData.mvp;
+  if ($("flexMvpDate")) $("flexMvpDate").textContent = summaryData.date.toUpperCase();
+  if (mvp) {
+    if ($("mvpExName")) $("mvpExName").textContent = mvp.name;
+    if ($("mvpExMeta")) $("mvpExMeta").textContent = (mvp.muscle + " · " + mvp.equipment + " · " + mvp.setsCount + " SETS").toUpperCase();
+    if ($("mvpTopSet")) $("mvpTopSet").textContent = mvp.topSetText;
+    if ($("mvpEst1rm")) $("mvpEst1rm").textContent = mvp.est1rmText;
+    if ($("mvpExVol")) $("mvpExVol").textContent = mvp.volumeText;
+  }
+
+  // 3. Populate Strava Photo Flex Card
+  if ($("photoFlexTitle")) $("photoFlexTitle").textContent = summaryData.title;
+  if ($("photoFlexVol")) $("photoFlexVol").textContent = volText;
+  if ($("photoFlexSets")) $("photoFlexSets").textContent = summaryData.totalSets;
+  if ($("photoFlexDur")) $("photoFlexDur").textContent = summaryData.durationMin + " MIN";
+  if ($("photoFlexMvp")) {
+    $("photoFlexMvp").textContent = mvp
+      ? ("👑 MVP LIFT: " + mvp.name.toUpperCase() + " (" + mvp.topSetText + ")")
+      : summaryData.deltaText;
+  }
+
+  switchFlexMode("carbon");
+  $("sumDoneBtn").querySelector("span").textContent = isSummaryFromHistory ? "RETURN TO HISTORY" : "DONE";
   $("summaryBackdrop").classList.remove("hidden");
   $("summaryModal").classList.remove("hidden");
 }
@@ -1583,13 +1910,241 @@ function closeSummaryModal() {
   }
 }
 
+// High-Res 1080x1920 Strava × Hevy Flex Card Canvas Exporter
+function generateAndShareStoryPoster(sData) {
+  if (!sData) return;
+  const canvas = document.createElement("canvas");
+  canvas.width = 1080;
+  canvas.height = 1920;
+  const ctx = canvas.getContext("2d");
+  const prof = typeof getAthleteProfile === "function" ? getAthleteProfile() : { name: "ATHLETE", level: 1 };
+  const unit = unitName().toUpperCase();
+  const volText = showWeight(sData.volume).toLocaleString() + " " + unit;
+
+  function finalizeExport() {
+    canvas.toBlob(function (blob) {
+      if (!blob) return;
+      const fileName = "strvex-flex-" + todayKey() + ".png";
+      const file = new File([blob], fileName, { type: "image/png" });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        navigator.share({
+          title: "STRVEX Workout Flex",
+          text: sData.title + " logged on STRVEX!",
+          files: [file]
+        }).catch(function () {});
+      } else {
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = fileName;
+        link.click();
+        showToast("Flex Card (.PNG) downloaded ✓");
+      }
+    }, "image/png");
+  }
+
+  // If Photo Flex Mode with uploaded photo, draw user photo + Strava watermark overlay
+  if (activeFlexMode === "photo" && uploadedFlexPhotoDataUrl) {
+    const img = new Image();
+    img.onload = function () {
+      ctx.fillStyle = "#0a0a0a";
+      ctx.fillRect(0, 0, 1080, 1920);
+      const scale = Math.max(1080 / img.width, 1920 / img.height);
+      const dw = img.width * scale;
+      const dh = img.height * scale;
+      ctx.drawImage(img, (1080 - dw) / 2, (1920 - dh) / 2, dw, dh);
+
+      const grad = ctx.createLinearGradient(0, 0, 0, 1920);
+      grad.addColorStop(0, "rgba(0,0,0,0.55)");
+      grad.addColorStop(0.4, "rgba(0,0,0,0.1)");
+      grad.addColorStop(1, "rgba(0,0,0,0.92)");
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, 1080, 1920);
+
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "900 44px 'Archivo', sans-serif";
+      ctx.textAlign = "left";
+      ctx.fillText("STRVEX", 80, 130);
+
+      ctx.fillStyle = "#ff4422";
+      ctx.font = "800 30px 'JetBrains Mono', monospace";
+      ctx.textAlign = "right";
+      ctx.fillText(prof.name + " // LVL " + prof.level, 1000, 130);
+
+      ctx.textAlign = "left";
+      ctx.fillStyle = "#d4b483";
+      ctx.font = "700 30px 'JetBrains Mono', monospace";
+      ctx.fillText(sData.date.toUpperCase(), 80, 1340);
+
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "900 76px 'Archivo', sans-serif";
+      ctx.fillText((sData.title || "WORKOUT").toUpperCase().slice(0, 20), 80, 1430);
+
+      ctx.strokeStyle = "rgba(255,255,255,0.35)";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(80, 1475);
+      ctx.lineTo(1000, 1475);
+      ctx.stroke();
+
+      const stats = [
+        { l: "TOTAL VOLUME", v: volText },
+        { l: "WORKING SETS", v: String(sData.totalSets) },
+        { l: "DURATION", v: sData.durationMin + " MIN" }
+      ];
+      stats.forEach(function (st, idx) {
+        const sx = 80 + idx * 320;
+        ctx.fillStyle = "#d4b483";
+        ctx.font = "700 24px 'JetBrains Mono', monospace";
+        ctx.fillText(st.l, sx, 1535);
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "900 54px 'Archivo', sans-serif";
+        ctx.fillText(st.v, sx, 1605);
+      });
+
+      if (sData.mvp) {
+        ctx.fillStyle = "#ff4422";
+        ctx.font = "800 32px 'JetBrains Mono', monospace";
+        ctx.fillText("👑 MVP LIFT: " + sData.mvp.name.toUpperCase() + " — " + sData.mvp.topSetText, 80, 1710);
+      }
+
+      ctx.fillStyle = "rgba(255,255,255,0.6)";
+      ctx.font = "700 24px 'JetBrains Mono', monospace";
+      ctx.textAlign = "center";
+      ctx.fillText("STRVEX // STRENGTH LOGBOOK", 540, 1840);
+      finalizeExport();
+    };
+    img.src = uploadedFlexPhotoDataUrl;
+    return;
+  }
+
+  // Dark Carbon Luxury Radial Glow Background (Hevy × Strava Style)
+  ctx.fillStyle = "#0d0d0c";
+  ctx.fillRect(0, 0, 1080, 1920);
+
+  const glow = ctx.createRadialGradient(850, 280, 40, 850, 280, 900);
+  glow.addColorStop(0, "rgba(255, 68, 34, 0.32)");
+  glow.addColorStop(0.5, "rgba(212, 180, 131, 0.08)");
+  glow.addColorStop(1, "rgba(13, 13, 12, 0)");
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, 1080, 1920);
+
+  // Outer Carbon Frame
+  ctx.fillStyle = "rgba(28, 28, 26, 0.88)";
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.16)";
+  ctx.lineWidth = 3;
+  roundRect(ctx, 64, 100, 952, 1720, 40);
+  ctx.fill();
+  ctx.stroke();
+
+  // Top Brand & Athlete Tag
+  ctx.fillStyle = "#ebe6dc";
+  ctx.font = "900 38px 'Archivo', sans-serif";
+  ctx.textAlign = "left";
+  ctx.fillText("STRVEX // FLEX CARD", 124, 190);
+
+  ctx.fillStyle = "#ff4422";
+  ctx.font = "800 28px 'JetBrains Mono', monospace";
+  ctx.textAlign = "right";
+  ctx.fillText(prof.name + " · LVL " + prof.level, 956, 190);
+
+  ctx.textAlign = "left";
+  ctx.fillStyle = "#9a968c";
+  ctx.font = "700 26px 'JetBrains Mono', monospace";
+  ctx.fillText(sData.date.toUpperCase() + "  ·  " + sData.durationMin + " MIN", 124, 265);
+
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "900 68px 'Archivo', sans-serif";
+  ctx.fillText((sData.title || "STRENGTH SESSION").toUpperCase().slice(0, 22), 124, 350);
+
+  // Giant Volume Hero Box
+  ctx.fillStyle = "rgba(0,0,0,0.55)";
+  roundRect(ctx, 124, 400, 832, 270, 28);
+  ctx.fill();
+  ctx.fillStyle = "#ff4422";
+  ctx.fillRect(124, 400, 12, 270);
+
+  ctx.fillStyle = "#d4b483";
+  ctx.font = "800 24px 'JetBrains Mono', monospace";
+  ctx.fillText("TOTAL SESSION VOLUME", 170, 460);
+
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "900 96px 'Archivo', sans-serif";
+  ctx.fillText(volText, 170, 570);
+
+  ctx.fillStyle = "#26d07c";
+  ctx.font = "800 26px 'JetBrains Mono', monospace";
+  ctx.fillText(sData.deltaText || "VERIFIED SESSION", 170, 632);
+
+  // MVP Best Lift Spotlight Box
+  if (sData.mvp) {
+    ctx.fillStyle = "rgba(255, 255, 255, 0.04)";
+    roundRect(ctx, 124, 710, 832, 240, 24);
+    ctx.fill();
+
+    ctx.fillStyle = "#d4b483";
+    ctx.font = "800 24px 'JetBrains Mono', monospace";
+    ctx.fillText("👑 SESSION MVP LIFT // EST. 1RM: " + sData.mvp.est1rmText, 164, 768);
+
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "900 46px 'Archivo', sans-serif";
+    ctx.fillText(sData.mvp.name.slice(0, 26), 164, 835);
+
+    ctx.fillStyle = "#ff4422";
+    ctx.font = "900 44px 'JetBrains Mono', monospace";
+    ctx.fillText("TOP SET: " + sData.mvp.topSetText, 164, 905);
+  }
+
+  // Exercises & PRs Summary
+  let curY = 1020;
+  ctx.fillStyle = "#d4b483";
+  ctx.font = "800 24px 'JetBrains Mono', monospace";
+  ctx.fillText("WORKOUT LINEUP (" + sData.totalSets + " WORKING SETS)", 124, curY);
+
+  (sData.exerciseLines || []).slice(0, 6).forEach(function (ex, i) {
+    curY += 74;
+    ctx.fillStyle = "rgba(255,255,255,0.05)";
+    roundRect(ctx, 124, curY - 46, 832, 62, 12);
+    ctx.fill();
+
+    ctx.fillStyle = "#ebe6dc";
+    ctx.font = "700 28px 'Archivo', sans-serif";
+    ctx.textAlign = "left";
+    ctx.fillText(pad(i + 1) + ". " + ex.name.slice(0, 28), 150, curY - 6);
+
+    ctx.fillStyle = "#ff4422";
+    ctx.font = "800 24px 'JetBrains Mono', monospace";
+    ctx.textAlign = "right";
+    ctx.fillText(ex.setsCount + " SETS", 930, curY - 6);
+  });
+
+  if (sData.prs && sData.prs.length > 0) {
+    curY += 80;
+    ctx.textAlign = "left";
+    ctx.fillStyle = "#ff4422";
+    ctx.font = "800 28px 'JetBrains Mono', monospace";
+    ctx.fillText("🏆 " + sData.prs.length + " NEW PERSONAL RECORD(S) BROKEN!", 124, curY);
+  }
+
+  ctx.fillStyle = "#9a968c";
+  ctx.font = "800 26px 'JetBrains Mono', monospace";
+  ctx.textAlign = "center";
+  ctx.fillText("BUILT WITH STRVEX // STRENGTH LOGBOOK", 540, 1765);
+
+  finalizeExport();
+}
+
+if ($("sumSharePosterBtn")) {
+  $("sumSharePosterBtn").addEventListener("click", function () {
+    generateAndShareStoryPoster(activeSummaryData);
+  });
+}
+
 $("sumDoneBtn").addEventListener("click", closeSummaryModal);
 $("sumCloseBtn").addEventListener("click", closeSummaryModal);
 $("summaryBackdrop").addEventListener("click", closeSummaryModal);
 
 // ---------- Finish Session / Save Edited Routine / Save Edited Log ----------
 function finishWorkout() {
-  // Mode 1: Saving an Edited Routine Template
   if (editingRoutineId) {
     const routineExercises = [];
     document.querySelectorAll("#exerciseList .exCard").forEach(function (card) {
@@ -1622,7 +2177,6 @@ function finishWorkout() {
     return;
   }
 
-  // Mode 2 & 3: Live Workout or Editing Past Workout Log
   const unloggedValidRows = [];
   document.querySelectorAll("#exerciseList .exCard").forEach(function (card) {
     card.querySelectorAll(".setRow").forEach(function (row) {
@@ -1722,6 +2276,7 @@ function finishWorkout() {
       const updatedObj = hist[idx];
       clearDraft();
       endWorkoutUI();
+      updateHeaderAthleteBadge();
       renderTab("history");
       showToast("Workout log updated ✓");
       showSummaryModal(buildSummaryFromWorkout(updatedObj), true);
@@ -1745,8 +2300,10 @@ function finishWorkout() {
   saveHistory(hist);
   clearDraft();
   endWorkoutUI();
+  updateHeaderAthleteBadge();
   renderTab(currentTab);
-  showToast("Workout saved ✓");
+  playPrFanfare();
+  showToast("Workout Complete! Great job 🔥");
 
   showSummaryModal(buildSummaryFromWorkout(workoutObj), false);
 }
@@ -1799,7 +2356,7 @@ $("plus30").addEventListener("click", function () { addRest(30); });
 $("skipTimer").addEventListener("click", stopTimer);
 
 // =====================================================
-//  EXERCISE PICKER, 100% FIXED SWAP & MANAGEMENT SHEET
+//  EXERCISE PICKER, SWAP & MANAGEMENT SHEET
 // =====================================================
 function showSheet() {
   $("sheetBackdrop").classList.remove("hidden");
@@ -2247,7 +2804,7 @@ function renderHistoryList() {
     list.innerHTML =
       '<div class="metal-card" style="text-align:center; color:var(--muted); padding:24px 16px;">' +
         '<p style="margin:0 0 4px; font-weight:700;">No workout logs found.</p>' +
-        '<small style="font-family:var(--font-mono);">Completed workouts will appear here with full session summaries.</small>' +
+        '<small style="font-family:var(--font-mono);">Completed workouts will appear here with full Flex Cards.</small>' +
       '</div>';
     return;
   }
@@ -2303,7 +2860,7 @@ function renderHistoryList() {
 
     const sumBtn = document.createElement("button");
     sumBtn.className = "keycap-btn primary";
-    sumBtn.textContent = "SUMMARY";
+    sumBtn.textContent = "FLEX CARD";
     sumBtn.addEventListener("click", function () {
       showSummaryModal(buildSummaryFromWorkout(w), true);
     });
@@ -2333,6 +2890,7 @@ function renderHistoryList() {
         saveHistory(nextHist);
         renderHistoryTab();
         updateHeroStats();
+        updateHeaderAthleteBadge();
         showToast("Workout log deleted");
       }
     });
@@ -2361,15 +2919,43 @@ function renderHistoryList() {
 }
 
 // =====================================================
-//  TAB 3: PROGRESS, RECOVERY %, REP TABLE & MEASUREMENTS
+//  TAB 3: PROGRESS, ACHIEVEMENTS, RECOVERY % & CHARTS
 // =====================================================
 function renderProgressTab() {
+  renderAchievements();
   renderMuscleRecovery();
   renderWeeklyMuscles();
   renderProgressChart();
   renderRecords();
   renderBodyWeight();
   renderMeasurements();
+}
+
+function renderAchievements() {
+  const grid = $("achievementsGrid");
+  if (!grid || typeof getAchievements !== "function") return;
+  grid.innerHTML = "";
+
+  const list = getAchievements();
+  let unlockedCount = 0;
+
+  list.forEach(function (ach) {
+    if (ach.unlocked) unlockedCount++;
+    const card = document.createElement("div");
+    card.className = "ach-card" + (ach.unlocked ? " unlocked" : "");
+    card.innerHTML =
+      '<div class="ach-head">' +
+        '<span class="ach-icon">' + ach.icon + '</span>' +
+        '<span class="ach-title">' + esc(ach.title) + '</span>' +
+      '</div>' +
+      '<div class="ach-desc">' + esc(ach.desc) + '</div>' +
+      '<div class="ach-prog">' + (ach.unlocked ? "UNLOCKED ✓" : esc(ach.progress)) + '</div>';
+    grid.appendChild(card);
+  });
+
+  if ($("achievementsCountLabel")) {
+    $("achievementsCountLabel").textContent = unlockedCount + " / " + list.length + " UNLOCKED";
+  }
 }
 
 function renderMuscleRecovery() {
@@ -2498,7 +3084,6 @@ function renderProgressChart() {
     format: v => v + suffix
   });
 
-  // Render 1RM-to-12RM Rep-Max Table for weighted exercises
   if (rmBox) {
     rmBox.innerHTML = "";
     if (!isNoWeight) {
@@ -2627,7 +3212,6 @@ $("bwAddBtn").addEventListener("click", function () {
   showToast("Body weight logged");
 });
 
-// ---------- Body Measurements Tracker (Arms, Chest, Waist, Thighs, Body Fat %) ----------
 function renderMeasurements() {
   const box = $("measList");
   if (!box || typeof getMeasurements !== "function") return;
@@ -2682,15 +3266,37 @@ if ($("measAddBtn")) {
 }
 
 // =====================================================
-//  TAB 4: SETTINGS, LIBRARY, BACKUP & CSV IMPORTER
+//  TAB 4: SETTINGS, RPE TOGGLE, THEME, LIBRARY & CSV
 // =====================================================
 function renderMoreTab() {
   $("moreMain").classList.remove("hidden");
   $("libraryView").classList.add("hidden");
   const s = getSettings();
   setSegmented($("unitSeg"), s.unit);
+  if ($("themeSeg")) setSegmented($("themeSeg"), s.theme || "dark");
+  if ($("rpeToggleSeg")) setSegmented($("rpeToggleSeg"), s.showRpe ? "on" : "off");
   $("restInput").value = s.rest;
   $("exCount").textContent = getExercises().length + " ›";
+}
+
+if ($("rpeToggleSeg")) {
+  bindSegmented($("rpeToggleSeg"), function (v) {
+    const s = getSettings();
+    s.showRpe = (v === "on");
+    saveSettings(s);
+    applyRpeVisibility(s.showRpe);
+    showToast("RPE Column " + (s.showRpe ? "enabled" : "hidden (clean view)"));
+  });
+}
+
+if ($("themeSeg")) {
+  bindSegmented($("themeSeg"), function (v) {
+    const s = getSettings();
+    s.theme = v;
+    saveSettings(s);
+    applyTheme(v);
+    showToast(v === "light" ? "Switched to Warm Bone Daylight Theme" : "Switched to Dark Titanium Theme");
+  });
 }
 
 bindSegmented($("unitSeg"), function (v) {
@@ -2889,7 +3495,6 @@ $("importFile").addEventListener("change", function () {
   reader.readAsText(file);
 });
 
-// Hevy & Strong CSV Importer Handler
 if ($("importCsvFile")) {
   $("importCsvFile").addEventListener("change", function () {
     const file = $("importCsvFile").files[0];
@@ -2899,6 +3504,7 @@ if ($("importCsvFile")) {
       try {
         const count = importWorkoutsFromCsv(reader.result);
         updateHeroStats();
+        updateHeaderAthleteBadge();
         showToast("Imported " + count + " workouts from CSV ✓");
         showTab("history");
       } catch (err) {
@@ -2913,9 +3519,23 @@ if ($("importCsvFile")) {
 // =====================================================
 //  INITIALIZATION
 // =====================================================
-bindRoutineCategoryFilters();
-restoreDraft();
-showTab(location.hash.slice(1) || "workout");
+(function initStrvex() {
+  const s = getSettings();
+  applyTheme(s.theme || "dark");
+  applyRpeVisibility(s.showRpe);
+  if (s.defaultTrack) {
+    routineCategoryFilter = s.defaultTrack;
+  }
+  bindRoutineCategoryFilters();
+  initMusicDock();
+  restoreDraft();
+  updateHeaderAthleteBadge();
+  showTab(location.hash.slice(1) || "workout");
+
+  if (!s.onboarded) {
+    setTimeout(openOnboardingModal, 350);
+  }
+})();
 
 window.addEventListener("resize", function () {
   if (Math.abs(window.innerWidth - lastWindowWidth) > 10) {
