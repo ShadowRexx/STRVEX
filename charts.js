@@ -1,4 +1,4 @@
-// ============ charts.js : high-performance tactical canvas charts ============
+// ============ charts.js : HIGH-CONTRAST DUAL-THEME CANVAS CHARTS ============
 
 function cssVar(n) {
   return getComputedStyle(document.documentElement).getPropertyValue(n).trim();
@@ -71,6 +71,8 @@ function drawChart(canvas, points, opts, active) {
   const muted = cssVar("--muted") || "#8c887f";
   const gridColor = cssVar("--metal-edge") || "rgba(255, 255, 255, 0.08)";
   const cardBg = cssVar("--metal") || "#1c1c1a";
+  const badgeBg = cssVar("--bone") || "#ebe6dc";
+  const badgeText = cssVar("--ink") || "#121211";
 
   canvas._chart = { points: points, opts: opts, xs: [] };
   bindChart(canvas);
@@ -80,7 +82,7 @@ function drawChart(canvas, points, opts, active) {
     ctx.font = "11px " + FONT;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText("NO TELEMETRY DATA RECORDED", w / 2, h / 2);
+    ctx.fillText("NO DATA RECORDED", w / 2, h / 2);
     return;
   }
 
@@ -112,7 +114,6 @@ function drawChart(canvas, points, opts, active) {
     return padT + (hi - v) / range * plotH;
   }
 
-  // Tactical Dashed Grid Lines + Numerical Y-Axis
   ctx.font = "10px " + FONT;
   ctx.textAlign = "right";
   ctx.textBaseline = "middle";
@@ -135,7 +136,6 @@ function drawChart(canvas, points, opts, active) {
   const pts = points.map(function (p, i) { return { x: xOf(i), y: yOf(p.v) }; });
   canvas._chart.xs = pts.map(function (p) { return p.x; });
 
-  // Gradient under curve (Fixed Hex Parsing Bug)
   const grad = ctx.createLinearGradient(0, padT, 0, padT + plotH);
   grad.addColorStop(0, hexToRgba(accent, 0.28));
   grad.addColorStop(1, hexToRgba(accent, 0.0));
@@ -147,7 +147,6 @@ function drawChart(canvas, points, opts, active) {
   ctx.fillStyle = grad;
   ctx.fill();
 
-  // Solid Telemetry Line
   ctx.beginPath();
   smoothPath(ctx, pts);
   ctx.strokeStyle = accent;
@@ -156,7 +155,6 @@ function drawChart(canvas, points, opts, active) {
   ctx.lineJoin = "round";
   ctx.stroke();
 
-  // Metric Nodes
   if (pts.length <= 25) {
     pts.forEach(function (p) {
       ctx.beginPath();
@@ -169,7 +167,6 @@ function drawChart(canvas, points, opts, active) {
     });
   }
 
-  // Date Labels (First and Last)
   ctx.fillStyle = muted;
   ctx.textBaseline = "alphabetic";
   const labelY = padT + plotH + 18;
@@ -183,7 +180,6 @@ function drawChart(canvas, points, opts, active) {
     ctx.fillText(points[points.length - 1].label || "", w - padR, labelY);
   }
 
-  // Crosshair on Active Node
   const act = (active === null || active === undefined) ? pts.length - 1 : active;
   const ap = pts[act];
   ctx.strokeStyle = brass;
@@ -200,10 +196,10 @@ function drawChart(canvas, points, opts, active) {
   ctx.fillStyle = accent;
   ctx.fill();
   ctx.lineWidth = 2;
-  ctx.strokeStyle = "#ffffff";
+  ctx.strokeStyle = badgeBg;
   ctx.stroke();
 
-  // Callout Badge
+  // Dynamic Dual-Theme Callout Badge (Sharp in both Dark Titanium & Warm Bone Light Mode)
   const text = format(points[act].v) + (points[act].label ? " // " + points[act].label : "");
   ctx.font = "700 11px " + FONT;
   const bw = ctx.measureText(text).width + 16;
@@ -213,9 +209,9 @@ function drawChart(canvas, points, opts, active) {
   let by = ap.y - bh - 10;
   if (by < 2) by = ap.y + 14;
   roundRect(ctx, bx, by, bw, bh, 4);
-  ctx.fillStyle = "#ebe6dc";
+  ctx.fillStyle = badgeBg;
   ctx.fill();
-  ctx.fillStyle = "#121211";
+  ctx.fillStyle = badgeText;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillText(text, bx + bw / 2, by + bh / 2);

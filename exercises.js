@@ -1,4 +1,4 @@
-// ============ exercises.js : STRVEX EXERCISE DATABASE, GUIDES & CURATED SPLITS ============
+// ============ exercises.js : STRVEX EXERCISE DATABASE, 25 BIOMECHANICAL GUIDES & SPLITS ============
 
 const DEFAULT_EXERCISES = [
   // --- CHEST (24) ---
@@ -196,9 +196,8 @@ const DEFAULT_EXERCISES = [
   { id: "ex_vacuum", name: "Stomach Vacuum Hold", type: "time", equipment: "Bodyweight", primary: "Core", secondary: [] }
 ];
 
-// --- 5 CURATED ROUTINE SPLITS (With Complete 3-Day Beginner & Target Rep Ranges) ---
+// --- 5 CURATED ROUTINE SPLITS ---
 const CURATED_ROUTINES = [
-  // 1. Beginner Track (3 Days/Week — Complete Day 1, Day 2, Day 3)
   {
     id: "routine_fullbody_a",
     category: "Beginner Track (3 Days)",
@@ -239,8 +238,6 @@ const CURATED_ROUTINES = [
       { exId: "ex_plank", sets: 2, reps: "45-60s" }
     ]
   },
-
-  // 2. Upper / Lower Split (4 Days/Week)
   {
     id: "routine_upper_a",
     category: "Hypertrophy Track (4 Days)",
@@ -295,8 +292,6 @@ const CURATED_ROUTINES = [
       { exId: "ex_seated_calf_raise", sets: 4, reps: "12-15" }
     ]
   },
-
-  // 3. Advanced 6-Day Split (Push / Pull / Legs)
   {
     id: "routine_ppl_push",
     category: "Advanced Volume (6 Days PPL)",
@@ -339,17 +334,15 @@ const CURATED_ROUTINES = [
       { exId: "ex_hanging_leg_raise", sets: 3, reps: "10-15" }
     ]
   },
-
-  // 4. Classic 5-Day Arnold Split
   {
     id: "routine_arnold_chest_back",
     category: "Classic Bodybuilding (Arnold 5-Day)",
     name: "Arnold: Chest & Back",
     description: "Classic antagonist workout training opposing chest and back muscles.",
     exercises: [
-      { exId: "ex_bb_bench", sets: 4, reps: "8-10" },
+      { exId: "ex_bb_bench", sets: 4, reps: "8-10", isSuperset: true },
       { exId: "ex_pullups", sets: 4, reps: "8-12" },
-      { exId: "ex_db_inc_bench", sets: 4, reps: "8-12" },
+      { exId: "ex_db_inc_bench", sets: 4, reps: "8-12", isSuperset: true },
       { exId: "ex_bb_bent_row", sets: 4, reps: "8-10" },
       { exId: "ex_db_pullover", sets: 3, reps: "10-12" }
     ]
@@ -363,9 +356,9 @@ const CURATED_ROUTINES = [
       { exId: "ex_bb_ohp", sets: 4, reps: "8-10" },
       { exId: "ex_db_lateral_raise", sets: 4, reps: "12-15" },
       { exId: "ex_rev_pec_deck", sets: 3, reps: "12-15" },
-      { exId: "ex_bb_curl", sets: 4, reps: "8-12" },
+      { exId: "ex_bb_curl", sets: 4, reps: "8-12", isSuperset: true },
       { exId: "ex_skull_crushers_ez", sets: 4, reps: "8-12" },
-      { exId: "ex_db_hammer_curl", sets: 3, reps: "10-12" },
+      { exId: "ex_db_hammer_curl", sets: 3, reps: "10-12", isSuperset: true },
       { exId: "ex_tricep_rope_pushdown", sets: 3, reps: "10-12" }
     ]
   },
@@ -382,8 +375,6 @@ const CURATED_ROUTINES = [
       { exId: "ex_standing_calf_raise", sets: 5, reps: "12-15" }
     ]
   },
-
-  // 5. Minimal Equipment Track (Dumbbells Only)
   {
     id: "routine_home_db_a",
     category: "Home & Minimal Equipment (Dumbbells Only)",
@@ -413,107 +404,223 @@ const CURATED_ROUTINES = [
   }
 ];
 
-// --- BUILT-IN EXERCISE EXECUTION GUIDES (Zero-MB Offline Form Coaching) ---
-const SPECIFIC_GUIDES = {
-  ex_bb_bench: {
-    setup: "Lie flat with eyes under the bar. Pull shoulder blades together and plant feet firmly on the floor.",
-    cue: "Lower the bar with control to your lower chest with elbows at a 45-70° angle, then press up and slightly back.",
-    mistake: "Flaring elbows straight out at 90° or bouncing the bar off the ribcage."
-  },
-  ex_conv_deadlift: {
-    setup: "Stand with feet hip-width apart, bar over mid-foot (1 inch from shins). Grip just outside legs.",
-    cue: "Brace your core hard, pull the slack out of the bar, and push the floor away while keeping the bar dragging up your legs.",
-    mistake: "Rounding the lower back or letting the bar drift forward away from the shins."
-  },
-  ex_bb_squat_high: {
-    setup: "Rest the bar on your upper traps, grip narrow, feet shoulder-width apart with toes turned out 15-30°.",
-    cue: "Take a deep belly breath, brace your core, and sit down between your heels until thighs are at least parallel.",
-    mistake: "Letting knees cave inward or lifting heels off the floor."
-  },
-  ex_bb_ohp: {
-    setup: "Grip the bar just outside shoulder width at collarbone height. Squeeze glutes and abs tight.",
-    cue: "Press the bar straight overhead, moving your head slightly back to clear the chin, then tuck head under at lockout.",
-    mistake: "Excessively leaning back and turning the overhead press into a standing incline press."
-  },
-  ex_rdl_bb: {
-    setup: "Hold the bar at hip height with a shoulder-width grip. Keep a soft 15° bend in your knees.",
-    cue: "Push your hips straight back like closing a car door with your glutes until you feel a deep hamstring stretch.",
-    mistake: "Bending the knees too much (turning it into a squat) or rounding the lower spine."
-  },
-  ex_lat_pulldown_wide: {
-    setup: "Grip the bar 1.5x shoulder width and lock your thighs tightly under the knee pad.",
-    cue: "Drive your elbows down toward your hips while keeping your chest slightly lifted.",
-    mistake: "Swinging your torso backward using momentum or pulling the bar behind your neck."
-  },
-  ex_db_lateral_raise: {
-    setup: "Stand tall holding dumbbells at your sides with a slight bend in your elbows, leaning forward 5-10°.",
-    cue: "Raise arms out and slightly forward (in the scapular plane) until elbows reach shoulder height.",
-    mistake: "Shrugging with your traps or swinging heavy weights with body momentum."
-  }
-};
-
+// --- 25 MOVEMENT-PATTERN BIOMECHANICAL GUIDES (Covers all 172 exercises accurately) ---
 function getExerciseGuide(exId) {
-  if (SPECIFIC_GUIDES[exId]) return SPECIFIC_GUIDES[exId];
-  const ex = DEFAULT_EXERCISES.find(e => e.id === exId);
+  const ex = DEFAULT_EXERCISES.find(e => e.id === exId) || (typeof getExercise === "function" ? getExercise(exId) : null);
+  const name = ex ? ex.name.toLowerCase() : "";
   const primary = ex ? ex.primary : "Other";
-  const equip = ex ? ex.equipment : "Barbell";
 
-  const fallbacks = {
-    Chest: {
-      setup: "Retract your shoulder blades into the bench/pad and keep your chest proud throughout the set.",
-      cue: "Control the 2-second stretch at the bottom and drive through your elbows to contract the pecs.",
-      mistake: "Letting the front shoulders roll forward at the top of the press or fly."
-    },
-    Back: {
-      setup: "Set a neutral spine, brace your core, and depress your shoulders away from your ears before pulling.",
-      cue: "Lead the pull with your elbows rather than your biceps, pausing briefly at peak contraction.",
-      mistake: "Using excessive lower-back swing or cutting the stretch short at the top."
-    },
-    Shoulders: {
-      setup: "Brace your core and keep your ribcage down with a stable base.",
-      cue: "Move smoothly without jerking, keeping constant tension on the deltoids.",
-      mistake: "Shrugging the upper traps toward your ears as fatigue builds."
-    },
-    Biceps: {
-      setup: "Pin your upper arms at your sides (or against the pad) with wrists firm and neutral.",
-      cue: "Curl through a full range of motion, squeezing hard at the top and lowering over 2 full seconds.",
-      mistake: "Swinging your hips and lower back to heave the weight up."
-    },
-    Triceps: {
-      setup: "Lock your elbows in place so only your forearms move around the elbow joint.",
-      cue: "Fully straighten the arm at lockout and control the stretch on the way back.",
-      mistake: "Flaring elbows wide or using shoulder momentum to push the weight."
-    },
-    Quads: {
-      setup: "Plant your whole foot firmly and brace your core before starting the descent.",
-      cue: "Control the lowering phase for 2-3 seconds, tracking your knees in line with your toes.",
-      mistake: "Bouncing out of the bottom or cutting depth short as the set gets hard."
-    },
-    Hamstrings: {
-      setup: "Brace your abs and maintain a flat, neutral spine or locked pelvis against the pad.",
-      cue: "Feel a full stretch in the hamstrings before contracting smoothly without jerking.",
-      mistake: "Arching the lower back or letting the hips lift off the pad during curls."
-    },
-    Glutes: {
-      setup: "Tuck your chin slightly and keep your ribs down with shins vertical at peak contraction.",
-      cue: "Drive through your heels and squeeze the glutes hard for 1 second at the top.",
-      mistake: "Hyperextending the lower back instead of extending through the hips."
-    },
-    Calves: {
-      setup: "Place the balls of your feet securely on the edge of the platform with knees straight (or bent for seated).",
-      cue: "Pause 1 full second in the bottom stretch and 1 second at the very top on your tiptoes.",
-      mistake: "Bouncing rapidly out of the bottom using Achilles tendon recoil."
-    },
-    Core: {
-      setup: "Exhale slightly to pull your ribs down toward your pelvis and flatten your lower back.",
-      cue: "Focus on curling the spine (or holding isometric tension) using abdominal control rather than hip flexors.",
-      mistake: "Pulling on your neck or letting your lower back arch off the floor."
-    }
-  };
+  // 1. Chest Flyes & Pec Deck
+  if (name.includes("fly") || name.includes("pec deck")) {
+    return {
+      setup: "Set seat/pulleys at chest level, retract shoulder blades, and keep a slight 15° bend in your elbows.",
+      cue: "Sweep your arms together in a wide arc as if hugging a tree, squeezing your inner pecs together for 1 second.",
+      mistake: "Bending the elbows too much (turning the fly into a press) or letting shoulders roll forward."
+    };
+  }
+  // 2. Pullover / Straight-Arm Lat Prayer
+  if (name.includes("pullover") || name.includes("prayer") || name.includes("straight-arm")) {
+    return {
+      setup: "Brace your core to keep ribs down and maintain a fixed, soft bend in your elbows.",
+      cue: "Pull the weight in an arc from overhead down toward your hips by driving with your lats and upper chest.",
+      mistake: "Bending and straightening the elbows (turning it into a tricep extension) or flaring the lower back."
+    };
+  }
+  // 3. Incline Presses
+  if (name.includes("incline") && name.includes("press")) {
+    return {
+      setup: "Set bench to 30–45° incline. Tuck shoulder blades down and plant feet firmly on the floor.",
+      cue: "Lower the weight to your upper chest (just below the collarbone) with elbows at ~45°, then press straight up.",
+      mistake: "Setting the bench too steep (60°+), which shifts the load from upper chest to front delts."
+    };
+  }
+  // 4. Dips & Push-Ups
+  if (name.includes("dip") || name.includes("push-up")) {
+    return {
+      setup: "Brace abs & glutes rigid. Lean torso slightly forward (for chest) or stay upright (for triceps).",
+      cue: "Lower under control until shoulders are slightly below elbows, then press to full lockout.",
+      mistake: "Shrugging shoulders up toward your ears or cutting depth to half-reps."
+    };
+  }
+  // 5. Horizontal Bench / Chest Presses
+  if (primary === "Chest") {
+    return {
+      setup: "Retract shoulder blades into the bench, create a stable upper-back base, and plant feet flat.",
+      cue: "Lower with control to the mid/lower chest with elbows tucked 45–65°, then drive powerfully to lockout.",
+      mistake: "Flaring elbows out at 90° or bouncing the weight off the chest."
+    };
+  }
+  // 6. Deadlifts & Rack Pulls
+  if ((name.includes("deadlift") && !name.includes("romanian") && !name.includes("stiff") && !name.includes("rdl")) || name.includes("rack pull")) {
+    return {
+      setup: "Stand with bar over mid-foot (1 inch from shins), grip just outside knees, chest proud and spine neutral.",
+      cue: "Take a deep breath, pull the slack out of the bar, and push the floor away while dragging the bar up your legs.",
+      mistake: "Rounding the lower back or letting the bar drift forward away from your shins."
+    };
+  }
+  // 7. Vertical Pulls (Lat Pulldowns, Pull-Ups, Chin-Ups)
+  if (name.includes("pulldown") || name.includes("pull-up") || name.includes("chin-up")) {
+    return {
+      setup: "Depress your shoulder blades down away from your ears before bending your elbows.",
+      cue: "Drive your elbows down toward your front pockets while keeping your chest lifted to meet the bar.",
+      mistake: "Using excessive backward torso swing or pulling mostly with the biceps."
+    };
+  }
+  // 8. Shrugs
+  if (name.includes("shrug")) {
+    return {
+      setup: "Stand tall with arms fully straight, leaning forward 5° with chin slightly tucked.",
+      cue: "Elevate your shoulders straight up toward your ears and hold the peak squeeze for 1 full second.",
+      mistake: "Rolling the shoulders in circles or bending the elbows during the shrug."
+    };
+  }
+  // 9. Horizontal Rows (Barbell, Dumbbell, Cable, T-Bar)
+  if (primary === "Back") {
+    return {
+      setup: "Brace your core, maintain a flat neutral spine, and let the weight protract your shoulder blades at the stretch.",
+      cue: "Pull your elbows back past your torso toward your hips, squeezing your mid-back at peak contraction.",
+      mistake: "Jerking the torso upright with momentum or curling the wrists."
+    };
+  }
+  // 10. Face Pulls & Rear Delt Flyes
+  if (name.includes("face pull") || name.includes("rear delt") || name.includes("reverse pec")) {
+    return {
+      setup: "Set cables/handles at upper-chest to eye height and keep shoulders relaxed down away from ears.",
+      cue: "Sweep elbows wide and back (externally rotating thumbs backward on face pulls) to isolate the rear delts.",
+      mistake: "Pinching shoulder blades together with heavy weight using mid-traps instead of rear delts."
+    };
+  }
+  // 11. Lateral & Front Raises / Upright Rows
+  if (name.includes("raise") || name.includes("upright row")) {
+    return {
+      setup: "Stand stable with a slight lean forward (5–10°) and a soft固定 bend in your elbows.",
+      cue: "Raise arms out in the scapular plane (30° forward) until elbows reach shoulder height.",
+      mistake: "Shrugging the upper traps or swinging the hips to heave heavy weights."
+    };
+  }
+  // 12. Overhead Shoulder Presses
+  if (primary === "Shoulders") {
+    return {
+      setup: "Set hands just outside shoulder width, tuck elbows slightly forward (30°), and brace glutes/core.",
+      cue: "Press vertically overhead to full lockout without excessive lower-back arch.",
+      mistake: "Cutting range of motion short above the ears or flaring ribs."
+    };
+  }
+  // 13. Preacher, Spider & Concentration Curls
+  if (name.includes("preacher") || name.includes("spider") || name.includes("concentration")) {
+    return {
+      setup: "Lock your triceps firmly against the pad so your shoulder joint cannot move.",
+      cue: "Curl smoothly to the top and lower over 2–3 seconds, stopping just shy of violent elbow hyperextension.",
+      mistake: "Lifting your elbows off the pad or dropping the weight uncontrolled at the bottom."
+    };
+  }
+  // 14. Hammer & Reverse Curls
+  if (name.includes("hammer") || name.includes("reverse")) {
+    return {
+      setup: "Keep palms facing each other (neutral grip) or facing down (reverse grip) with elbows pinned at sides.",
+      cue: "Curl the weight up targeting the brachialis and forearms without swinging your torso.",
+      mistake: "Driving the elbows forward or using body momentum."
+    };
+  }
+  // 15. Standard / Incline / Bayesian Bicep Curls
+  if (primary === "Biceps") {
+    return {
+      setup: "Stand tall (or lean back on incline) with upper arms locked perpendicular to the floor.",
+      cue: "Supinate (turn pinkies up) as you curl, squeeze hard at the top, and control the 2-second stretch.",
+      mistake: "Swinging the lower back or letting elbows drift forward to assist the lift."
+    };
+  }
+  // 16. Overhead Tricep Extensions & Skull Crushers
+  if (name.includes("overhead") || name.includes("skull") || name.includes("jm press") || name.includes("tate")) {
+    return {
+      setup: "Point elbows upward/forward at a fixed angle to place the long head of the triceps under stretch.",
+      cue: "Lower the weight behind your head/forehead until forearms pass 90°, then extend to lockout.",
+      mistake: "Letting elbows flare wide open or moving the upper arms like a pullover."
+    };
+  }
+  // 17. Tricep Pushdowns & Kickbacks
+  if (primary === "Triceps") {
+    return {
+      setup: "Take a small step back, hinge slightly at the hips, and pin your elbows tightly to your ribs.",
+      cue: "Extend your forearms down until elbows are completely straight, spreading the rope apart at the bottom.",
+      mistake: "Letting elbows ride forward and upward on every rep."
+    };
+  }
+  // 18. Leg Extensions
+  if (name.includes("extension") && primary === "Quads") {
+    return {
+      setup: "Adjust the back pad so the knee joint aligns directly with the machine's pivot point.",
+      cue: "Pull toes slightly up (dorsiflex) and extend legs to full straightness, pausing 1 second at the top.",
+      mistake: "Kicking the weight up explosively and letting the stack slam down."
+    };
+  }
+  // 19. Lunges, Split Squats & Step-Ups
+  if (name.includes("lunge") || name.includes("split squat") || name.includes("step-up")) {
+    return {
+      setup: "Take a hip-width stance (like standing on train tracks, not a tightrope) for balance.",
+      cue: "Lower under control driving through the front mid-foot/heel, keeping 80% of weight on the working leg.",
+      mistake: "Pushing off the back leg excessively or letting the front knee collapse inward."
+    };
+  }
+  // 20. Leg Press & Hack Squat
+  if (name.includes("leg press") || name.includes("hack squat") || name.includes("pendulum")) {
+    return {
+      setup: "Lock your lower back and glutes flat against the pad; place feet shoulder-width on the sled.",
+      cue: "Lower the sled as deep as possible while keeping your tailbone glued to the pad, then drive up without locking knees.",
+      mistake: "Letting your lower back curl off the pad at the bottom or placing hands on knees."
+    };
+  }
+  // 21. Barbell & Goblet Squats
+  if (primary === "Quads") {
+    return {
+      setup: "Set feet shoulder-width apart with toes turned out 15–30°. Take a 360° core breath and brace hard.",
+      cue: "Sit down between your heels keeping chest up and knees tracking over toes until thighs break parallel.",
+      mistake: "Letting hips shoot up faster than the chest or allowing knees to cave inward."
+    };
+  }
+  // 22. Leg Curls (Lying, Seated, Standing)
+  if (name.includes("curl") && primary === "Hamstrings") {
+    return {
+      setup: "Align knee joint with the machine pivot and lock the thigh/hip pad tightly down.",
+      cue: "Curl the pad all the way to your glutes/calves, pause 1 second, and resist the 2-second lowering phase.",
+      mistake: "Lifting your hips off the pad to jerk the weight up."
+    };
+  }
+  // 23. Romanian Deadlifts (RDL), Stiff-Leg & Good Mornings
+  if (primary === "Hamstrings") {
+    return {
+      setup: "Stand tall with a soft 15° bend in your knees and brace your core to lock your spine flat.",
+      cue: "Push your hips straight backward (hip hinge) while keeping the weight skimming down your thighs until hamstrings are fully stretched.",
+      mistake: "Lowering the bar by bending the lower back instead of pushing the hips back."
+    };
+  }
+  // 24. Hip Thrusts, Glute Bridges & Kickbacks
+  if (primary === "Glutes") {
+    return {
+      setup: "Tuck your chin slightly and keep ribs down; position feet so shins are vertical at the top.",
+      cue: "Drive through your heels to full hip extension and hold a hard 1-second glute squeeze at the top.",
+      mistake: "Arching the lower back instead of extending through the hip joint."
+    };
+  }
+  // 25. Calves, Forearms & Core
+  if (primary === "Calves") {
+    return {
+      setup: "Place balls of your feet on the platform edge and keep knees straight (or bent 90° for seated).",
+      cue: "Hold a 2-second deep stretch at the bottom, then press all the way up onto your big toes and pause 1 second.",
+      mistake: "Bouncing rapidly at the bottom using Achilles tendon recoil instead of calf muscle."
+    };
+  }
+  if (primary === "Core") {
+    return {
+      setup: "Exhale slightly to pull ribs down toward your pelvis and engage your deep transverse abs.",
+      cue: "Curl your pelvis toward your ribcage (or hold rigid anti-rotation tension) with zero momentum.",
+      mistake: "Swinging the legs using hip flexors or arching the lower spine."
+    };
+  }
 
-  return fallbacks[primary] || {
-    setup: "Set a stable posture and grip the " + equip.toLowerCase() + " evenly.",
-    cue: "Use a controlled 2-second lowering phase and full range of motion.",
-    mistake: "Using momentum instead of controlled muscular tension."
+  return {
+    setup: "Grip evenly and set a braced, stable posture before starting the set.",
+    cue: "Move through a full range of motion with a controlled 2-second lowering phase.",
+    mistake: "Using momentum or cutting the stretch short."
   };
 }

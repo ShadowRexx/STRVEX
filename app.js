@@ -1,4 +1,4 @@
-// ============ app.js (PART 1/2) : STRVEX CORE, MUSIC DOCK, LIVE PR & COCKPIT ============
+// ============ app.js (PART 1/2) : AUTO-CASCADE, LIVE SET PRs, TARGET TIME & COCKPIT ============
 
 function $(id) {
   return document.getElementById(id);
@@ -13,13 +13,30 @@ function esc(str) {
     .replace(/'/g, "&#39;");
 }
 
+// Local roundRect helper so Poster Generator never depends on external globals
+function drawRoundedBox(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
 // ---------- State ----------
 const TABS = ["workout", "history", "progress", "more"];
 let currentTab = "workout";
 let workoutActive = false;
 let workoutStart = 0;
 let editingWorkoutId = null;
-let editingRoutineId = null;
+let editingRoutineId = null; // null | routineId | "__NEW__"
+let duoPartnerName = null;
+let duoActiveLifter = "p1";
 let clockId = null;
 let restEnd = 0;
 let restId = null;
@@ -37,7 +54,6 @@ let formType = "weight";
 let wakeLock = null;
 let isSummaryFromHistory = false;
 let activeSummaryData = null;
-let activeFlexMode = "carbon"; // "carbon" | "mvp" | "photo"
 let uploadedFlexPhotoDataUrl = null;
 let lastWindowWidth = window.innerWidth;
 
@@ -52,8 +68,104 @@ let selectedSecondaryMuscles = new Set();
 // Onboarding temporary state
 let onbUnit = "kg";
 let onbTheme = "dark";
+let onbExp = "advanced";
 
-// ---------- Theme & RPE Column Visibility ----------
+// ---------- Custom Native-Style STRVEX Dialogs ----------
+let _dialogResolve = null;
+
+function openAppDialog(opts) {
+  return new Promise(function (resolve) {
+    _dialogResolve = resolve;
+    const backdrop = $("appDialogBackdrop");
+    const modal = $("appDialogModal");
+    const tagEl = $("appDialogTag");
+    const titleEl = $("appDialogTitle");
+    const msgEl = $("appDialogMessage");
+    const inputEl = $("appDialogInput");
+    const cancelBtn = $("appDialogCancelBtn");
+    const okBtn = $("appDialogOkBtn");
+
+    tagEl.textContent = opts.tag || "STRVEX // SYSTEM";
+    titleEl.textContent = opts.title || "Notice";
+    msgEl.textContent = opts.message || "";
+    okBtn.textContent = opts.okText || "OK";
+    cancelBtn.textContent = opts.cancelText || "CANCEL";
+    cancelBtn.classList.toggle("hidden", !!opts.hideCancel);
+
+    if (opts.inputMode) {
+      inputEl.classList.remove("hidden");
+      inputEl.value = opts.defaultValue || "";
+      inputEl.placeholder = opts.placeholder || "";
+    } else {
+      inputEl.classList.add("hidden");
+      inputEl.value = "";
+    }
+
+    backdrop.classList.remove("hidden");
+    modal.classList.remove("hidden");
+    if (opts.inputMode) {
+      setTimeout(function () { inputEl.focus(); inputEl.select(); }, 50);
+    } else {
+      setTimeout(function () { okBtn.focus(); }, 50);
+    }
+  });
+}
+
+function closeAppDialog(result) {
+  const backdrop = $("appDialogBackdrop");
+  const modal = $("appDialogModal");
+  if (backdrop) backdrop.classList.add("hidden");
+  if (modal) modal.classList.add("hidden");
+  if (_dialogResolve) {
+    const fn = _dialogResolve;
+    _dialogResolve = null;
+    fn(result);
+  }
+}
+
+if ($("appDialogOkBtn")) {
+  $("appDialogOkBtn").addEventListener("click", function () {
+    const inputEl = $("appDialogInput");
+    const isPrompt = inputEl && !inputEl.classList.contains("hidden");
+    closeAppDialog(isPrompt ? inputEl.value : true);
+  });
+}
+if ($("appDialogCancelBtn")) {
+  $("appDialogCancelBtn").addEventListener("click", function () {
+    const inputEl = $("appDialogInput");
+    const isPrompt = inputEl && !inputEl.classList.contains("hidden");
+    const cancelHidden = $("appDialogCancelBtn").classList.contains("hidden");
+    closeAppDialog(cancelHidden ? true : (isPrompt ? null : false));
+  });
+}
+if ($("appDialogBackdrop")) {
+  $("appDialogBackdrop").addEventListener("click", function () {
+    const inputEl = $("appDialogInput");
+    const isPrompt = inputEl && !inputEl.classList.contains("hidden");
+    const cancelHidden = $("appDialogCancelBtn") && $("appDialogCancelBtn").classList.contains("hidden");
+    closeAppDialog(cancelHidden ? true : (isPrompt ? null : false));
+  });
+}
+if ($("appDialogInput")) {
+  $("appDialogInput").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      $("appDialogOkBtn").click();
+    }
+  });
+}
+
+function appAlert(title, message) {
+  return openAppDialog({ tag: "STRVEX // NOTICE", title: title, message: message, hideCancel: true, okText: "GOT IT" });
+}
+function appConfirm(title, message, okText) {
+  return openAppDialog({ tag: "STRVEX // CONFIRM", title: title, message: message, okText: okText || "CONFIRM", cancelText: "CANCEL" });
+}
+function appPrompt(title, message, defaultValue, placeholder) {
+  return openAppDialog({ tag: "STRVEX // INPUT", title: title, message: message, inputMode: true, defaultValue: defaultValue || "", placeholder: placeholder || "", okText: "SAVE", cancelText: "CANCEL" });
+}
+
+// ---------- Theme, 5-Accent Color, Experience Mode & RPE Visibility ----------
 function applyTheme(themeMode) {
   const mode = themeMode === "light" ? "light" : "dark";
   document.documentElement.setAttribute("data-theme", mode);
@@ -67,13 +179,37 @@ function applyTheme(themeMode) {
   }
 }
 
+function applyAccentColor(accent) {
+  const valid = ["flame", "cyan", "crimson", "emerald", "volt"].includes(accent) ? accent : "flame";
+  document.documentElement.setAttribute("data-accent", valid);
+  if ($("accentColorSeg")) {
+    $("accentColorSeg").querySelectorAll(".accent-dot").forEach(function (btn) {
+      btn.classList.toggle("active", btn.dataset.v === valid);
+    });
+  }
+  if (currentTab === "progress" && typeof renderProgressChart === "function") {
+    renderProgressChart();
+    renderBodyWeight();
+  }
+}
+
+function applyExperienceMode(mode) {
+  const m = mode === "simple" ? "simple" : "advanced";
+  document.documentElement.setAttribute("data-exp", m);
+  if (m === "simple") {
+    applyRpeVisibility(false);
+  } else {
+    applyRpeVisibility(getSettings().showRpe);
+  }
+}
+
 function applyRpeVisibility(showRpe) {
   const ws = $("workoutScreen");
   if (!ws) return;
-  ws.classList.toggle("hide-rpe", !showRpe);
+  const isSimple = document.documentElement.getAttribute("data-exp") === "simple";
+  ws.classList.toggle("hide-rpe", isSimple || !showRpe);
 }
 
-// ---------- Header Athlete Name & Level Badge ----------
 function updateHeaderAthleteBadge() {
   if (typeof getAthleteProfile !== "function") return;
   const prof = getAthleteProfile();
@@ -88,10 +224,12 @@ function openOnboardingModal() {
   const s = getSettings();
   onbUnit = s.unit || "kg";
   onbTheme = s.theme || "dark";
+  onbExp = s.experienceMode || "advanced";
 
   if ($("onbNameInput")) $("onbNameInput").value = s.userName || "";
   if ($("onbUnitSeg")) setSegmented($("onbUnitSeg"), onbUnit);
   if ($("onbThemeSeg")) setSegmented($("onbThemeSeg"), onbTheme);
+  if ($("onbExpSeg")) setSegmented($("onbExpSeg"), onbExp);
   if ($("onbTrackSelect")) $("onbTrackSelect").value = s.defaultTrack || "all";
 
   $("onboardingBackdrop").classList.remove("hidden");
@@ -112,11 +250,13 @@ function saveOnboarding() {
   s.userName = nameVal.slice(0, 20);
   s.unit = onbUnit;
   s.theme = onbTheme;
+  s.experienceMode = onbExp;
   s.defaultTrack = trackVal;
   s.onboarded = true;
   saveSettings(s);
 
   applyTheme(s.theme);
+  applyExperienceMode(s.experienceMode);
   if (oldUnit !== s.unit) {
     syncActiveWorkoutUnits(oldUnit, s.unit);
   }
@@ -124,7 +264,7 @@ function saveOnboarding() {
   updateHeaderAthleteBadge();
   closeOnboardingModal();
   renderTab(currentTab);
-  showToast("Welcome to STRVEX, " + (s.userName || "Athlete") + "!");
+  showToast("Welcome to STRVEX, " + (s.userName || "Athlete"));
 }
 
 if ($("headerAthleteBtn")) $("headerAthleteBtn").addEventListener("click", openOnboardingModal);
@@ -133,7 +273,7 @@ if ($("onbCloseBtn")) $("onbCloseBtn").addEventListener("click", closeOnboarding
 if ($("onboardingBackdrop")) $("onboardingBackdrop").addEventListener("click", closeOnboardingModal);
 if ($("onbSaveBtn")) $("onbSaveBtn").addEventListener("click", saveOnboarding);
 
-// ---------- Web Audio API (Offline Beep & PR Victory Fanfare) ----------
+// ---------- Web Audio API (With Sound Mute Support) ----------
 let audioCtx = null;
 function getAudioCtx() {
   const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -145,6 +285,7 @@ function getAudioCtx() {
 document.addEventListener("pointerdown", getAudioCtx, { once: true });
 
 function playBeep(freq, type, duration) {
+  if (getSettings().soundMuted) return;
   try {
     const ctx = getAudioCtx();
     if (!ctx) return;
@@ -162,16 +303,40 @@ function playBeep(freq, type, duration) {
 }
 
 function playTimerFinishedBeep() {
+  if (getSettings().soundMuted) return;
   playBeep(880, "sine", 0.12);
   setTimeout(function () { playBeep(880, "sine", 0.12); }, 150);
   setTimeout(function () { playBeep(1174.66, "sine", 0.35); }, 320);
 }
 
 function playPrFanfare() {
+  if (getSettings().soundMuted) return;
   playBeep(587.33, "triangle", 0.12);
   setTimeout(function () { playBeep(783.99, "triangle", 0.12); }, 120);
   setTimeout(function () { playBeep(987.77, "triangle", 0.14); }, 240);
   setTimeout(function () { playBeep(1174.66, "triangle", 0.38); }, 370);
+}
+
+function syncMuteTimerUI() {
+  const muted = getSettings().soundMuted;
+  const btn = $("muteTimerBtn");
+  if (btn) {
+    btn.textContent = muted ? "MUTED" : "SOUND";
+    btn.style.color = muted ? "var(--red)" : "var(--bone)";
+  }
+  if ($("soundToggleSeg")) {
+    setSegmented($("soundToggleSeg"), muted ? "mute" : "on");
+  }
+}
+
+if ($("muteTimerBtn")) {
+  $("muteTimerBtn").addEventListener("click", function () {
+    const s = getSettings();
+    s.soundMuted = !s.soundMuted;
+    saveSettings(s);
+    syncMuteTimerUI();
+    showToast(s.soundMuted ? "Timer audio muted" : "Timer audio enabled");
+  });
 }
 
 let livePrTimerId = null;
@@ -181,7 +346,7 @@ function triggerLivePrCelebration(exNameStr, prLabel) {
   const banner = $("livePrBanner");
   const textEl = $("livePrText");
   if (!banner || !textEl) return;
-  textEl.textContent = "🏆 NEW LIVE PR! " + exNameStr.toUpperCase() + " — " + prLabel;
+  textEl.textContent = "NEW RECORD // " + exNameStr.toUpperCase() + " — " + prLabel;
   banner.classList.remove("hidden");
   clearTimeout(livePrTimerId);
   livePrTimerId = setTimeout(function () {
@@ -189,7 +354,7 @@ function triggerLivePrCelebration(exNameStr, prLabel) {
   }, 4500);
 }
 
-// ---------- In-Workout Music & Spotify Dock Controller ----------
+// ---------- In-Workout Audio & Spotify Dock Controller ----------
 function initMusicDock() {
   const toggleBtn = $("musicToggleBtn");
   const dock = $("musicDock");
@@ -221,12 +386,17 @@ function initMusicDock() {
   }
 
   if (customBtn) {
-    customBtn.addEventListener("click", function () {
-      const rawUrl = prompt("Paste any Spotify Playlist or Track link (e.g. https://open.spotify.com/playlist/...):", "");
+    customBtn.addEventListener("click", async function () {
+      const rawUrl = await appPrompt(
+        "SET SPOTIFY PLAYLIST",
+        "Paste any Spotify Playlist, Album, or Track link:",
+        "",
+        "https://open.spotify.com/playlist/..."
+      );
       if (!rawUrl || !rawUrl.trim()) return;
       const m = rawUrl.match(/spotify\.com\/(playlist|album|track)\/([a-zA-Z0-9]+)/);
       if (!m) {
-        alert("Please paste a valid Spotify playlist, album, or track URL.");
+        await appAlert("Invalid Link", "Please paste a valid Spotify playlist, album, or track URL.");
         return;
       }
       const embedUrl = "https://open.spotify.com/embed/" + m[1] + "/" + m[2] + "?utm_source=generator&theme=0";
@@ -234,9 +404,143 @@ function initMusicDock() {
       const s = getSettings();
       s.spotifyEmbedUrl = embedUrl;
       saveSettings(s);
-      showToast("Custom Spotify playlist loaded 🎵");
+      showToast("Custom Spotify playlist loaded");
     });
   }
+}
+
+// ---------- DUO // PARTNER MODE & TARGET TIME Controller ----------
+function updateWorkoutTargetTimeUI() {
+  const targetEl = $("wTargetTime");
+  if (!targetEl) return;
+  if (editingRoutineId) {
+    targetEl.textContent = "";
+    return;
+  }
+  const exList = [];
+  document.querySelectorAll("#exerciseList .exCard").forEach(function (card) {
+    const workingCount = Array.prototype.filter.call(
+      card.querySelectorAll(".setRow"),
+      r => r.dataset.type !== "W" && r.dataset.lifter !== "p2"
+    ).length;
+    if (workingCount > 0) {
+      exList.push({ exId: card.dataset.exid, sets: workingCount });
+    }
+  });
+  const estMin = typeof estimateWorkoutMinutes === "function" ? estimateWorkoutMinutes(exList) : 0;
+  targetEl.textContent = estMin > 0 ? ("/ ~" + estMin + "M") : "";
+}
+
+function updateDuoBarUI() {
+  const bar = $("duoBar");
+  const toggleBtn = $("duoToggleBtn");
+  if (!bar || !toggleBtn) return;
+
+  const isDuo = !!duoPartnerName && !editingRoutineId;
+  bar.classList.toggle("hidden", !isDuo);
+  toggleBtn.classList.toggle("hidden", !!editingRoutineId);
+  toggleBtn.textContent = isDuo ? "DUO:ON" : "+DUO";
+
+  if (!isDuo) return;
+
+  const p1Name = getAthleteProfile().name || "YOU";
+  const p2Name = duoPartnerName.toUpperCase();
+  const unit = unitName().toUpperCase();
+
+  $("duoP1Label").textContent = p1Name;
+  $("duoP2Label").textContent = p2Name;
+  $("duoTurnP1Btn").textContent = "TURN: " + p1Name;
+  $("duoTurnP2Btn").textContent = "TURN: " + p2Name;
+
+  setSegmented($("duoTurnSeg"), duoActiveLifter);
+  $("duoP1StatBox").classList.toggle("is-active", duoActiveLifter === "p1");
+  $("duoP2StatBox").classList.toggle("is-active", duoActiveLifter === "p2");
+
+  let p1Vol = 0, p1Sets = 0, p2Vol = 0, p2Sets = 0;
+  document.querySelectorAll("#exerciseList .exCard").forEach(function (card) {
+    const isWeighted = exTypeOf(card.dataset.exid) === "weight";
+    card.querySelectorAll(".setRow").forEach(function (row) {
+      if (!row.querySelector(".doneBox").classList.contains("checked")) return;
+      if (row.dataset.type === "W") return;
+      const kgInp = row.querySelector(".kgInput");
+      const repsInp = row.querySelector(".repsInput");
+      const wt = kgInp ? (Number(kgInp.value) || 0) : 0;
+      const reps = Number(repsInp.value) || 0;
+      const vol = isWeighted ? (wt * reps) : 0;
+      if (row.dataset.lifter === "p2") {
+        p2Sets++;
+        p2Vol += vol;
+      } else {
+        p1Sets++;
+        p1Vol += vol;
+      }
+    });
+  });
+
+  $("duoP1Score").textContent = Math.round(p1Vol).toLocaleString() + " " + unit + " · " + p1Sets + " SETS";
+  $("duoP2Score").textContent = Math.round(p2Vol).toLocaleString() + " " + unit + " · " + p2Sets + " SETS";
+}
+
+function initDuoControls() {
+  const toggleBtn = $("duoToggleBtn");
+  const removeBtn = $("duoRemoveBtn");
+  const turnSeg = $("duoTurnSeg");
+
+  if (toggleBtn) {
+    toggleBtn.addEventListener("click", async function () {
+      if (duoPartnerName) {
+        const nextName = await appPrompt("PARTNER NAME", "Update your gym partner's name:", duoPartnerName, "e.g. Rohan");
+        if (nextName && nextName.trim()) {
+          duoPartnerName = nextName.trim().slice(0, 16);
+          updateDuoBarUI();
+          saveDraft();
+        }
+        return;
+      }
+      const partner = await appPrompt(
+        "DUO // PARTNER MODE",
+        "Training with a friend on 1 phone?\nEnter your partner's name to track Head-to-Head sets & volume:",
+        "",
+        "e.g. Rohan"
+      );
+      if (!partner || !partner.trim()) return;
+      duoPartnerName = partner.trim().slice(0, 16);
+      duoActiveLifter = "p1";
+      updateDuoBarUI();
+      saveDraft();
+      showToast("Duo Mode Active: " + getAthleteProfile().name + " vs " + duoPartnerName.toUpperCase());
+    });
+  }
+
+  if (removeBtn) {
+    removeBtn.addEventListener("click", async function () {
+      const ok = await appConfirm("EXIT DUO MODE", "Turn off Duo Mode for this session?", "EXIT DUO");
+      if (!ok) return;
+      duoPartnerName = null;
+      duoActiveLifter = "p1";
+      updateDuoBarUI();
+      saveDraft();
+    });
+  }
+
+  if (turnSeg) {
+    bindSegmented(turnSeg, function (v) {
+      duoActiveLifter = v === "p2" ? "p2" : "p1";
+      updateDuoBarUI();
+    });
+  }
+}
+
+if ($("toggleMetaDateBtn")) {
+  $("toggleMetaDateBtn").addEventListener("click", function () {
+    const row = $("wEditMetaRow");
+    if (!row) return;
+    const isHidden = row.classList.contains("hidden");
+    row.classList.toggle("hidden", !isHidden);
+    if (isHidden && $("wDateInput") && !$("wDateInput").value) {
+      $("wDateInput").value = toDateInputValue(workoutStart || Date.now());
+    }
+  });
 }
 
 // ---------- Screen Wake Lock API ----------
@@ -262,7 +566,6 @@ document.addEventListener("visibilitychange", function () {
   }
 });
 
-// ---------- Toast Notifications ----------
 let toastId = null;
 function showToast(msg) {
   const t = $("toast");
@@ -273,7 +576,6 @@ function showToast(msg) {
   toastId = setTimeout(function () { t.classList.remove("show"); }, 2600);
 }
 
-// ---------- Segmented Controls ----------
 function setSegmented(el, v) {
   if (!el) return;
   el.querySelectorAll("button").forEach(function (b) {
@@ -292,6 +594,7 @@ function bindSegmented(el, onChange) {
 }
 
 if ($("onbUnitSeg")) bindSegmented($("onbUnitSeg"), v => { onbUnit = v; });
+if ($("onbExpSeg")) bindSegmented($("onbExpSeg"), v => { onbExp = v; });
 if ($("onbThemeSeg")) {
   bindSegmented($("onbThemeSeg"), v => {
     onbTheme = v;
@@ -301,7 +604,9 @@ if ($("onbThemeSeg")) {
 
 document.addEventListener("keydown", function (e) {
   if (e.key !== "Escape") return;
-  if ($("onboardingModal") && !$("onboardingModal").classList.contains("hidden")) {
+  if ($("appDialogModal") && !$("appDialogModal").classList.contains("hidden")) {
+    $("appDialogCancelBtn").click();
+  } else if ($("onboardingModal") && !$("onboardingModal").classList.contains("hidden")) {
     closeOnboardingModal();
   } else if ($("plateModal") && !$("plateModal").classList.contains("hidden")) {
     closePlateCalculator();
@@ -355,7 +660,7 @@ window.addEventListener("hashchange", function () {
 });
 
 // =====================================================
-//  TAB 1: LOGBOOK (HOME)
+//  TAB 1: WORKOUT & ROUTINES (With Est. Duration Target)
 // =====================================================
 function syncRoutineCategoryChips() {
   const container = $("routineCategoryFilter");
@@ -389,7 +694,7 @@ function renderWorkoutTab() {
     const card = document.createElement("div");
     card.className = "card resume";
     const modeLabel = editingRoutineId
-      ? "EDITING ROUTINE TEMPLATE"
+      ? (editingRoutineId === "__NEW__" ? "CREATING NEW ROUTINE" : "EDITING ROUTINE TEMPLATE")
       : (editingWorkoutId ? "EDITING PAST WORKOUT LOG" : "ACTIVE WORKOUT IN PROGRESS");
     card.innerHTML =
       '<div class="resume-info">' +
@@ -432,8 +737,8 @@ function renderWorkoutTab() {
         '<p style="margin:0 0 6px; font-weight:700;">No routines found under this filter.</p>' +
         '<small style="font-family:var(--font-mono);">' +
           (routineCategoryFilter === "custom"
-            ? 'You have not saved any custom routines yet. Tap "+ START EMPTY WORKOUT" and tap "SAVE AS ROUTINE" to create your own!'
-            : 'Select "ALL ROUTINES" or create your own custom template.') +
+            ? 'No custom routines yet. Tap "+ CREATE NEW ROUTINE" above to build one.'
+            : 'Select "ALL ROUTINES" or build your own routine.') +
         '</small>' +
       '</div>';
     return;
@@ -443,6 +748,7 @@ function renderWorkoutTab() {
     const card = document.createElement("div");
     card.className = "metal-card routine-card";
     const isCustom = r.category === "Custom Templates" || !String(r.id).startsWith("routine_");
+    const estMinutes = typeof estimateWorkoutMinutes === "function" ? estimateWorkoutMinutes(r.exercises) : 45;
 
     const muscleSet = new Set();
     (r.exercises || []).forEach(e => {
@@ -461,17 +767,17 @@ function renderWorkoutTab() {
       '</div>' +
       '<div class="routine-muscle-pills">' + musclePillsHtml + '</div>' +
       '<div class="routine-footer-row">' +
-        '<span class="routine-exercise-count">' + (r.exercises ? r.exercises.length : 0) + ' Exercises</span>' +
+        '<span class="routine-exercise-count">' + (r.exercises ? r.exercises.length : 0) + ' Exercises  ·  ~' + estMinutes + ' Min</span>' +
         '<div class="routine-card-buttons">' +
           '<button class="keycap-btn prev-btn">PREVIEW</button>' +
-          '<button class="keycap-btn edit-r-btn" title="Edit Routine">✎ EDIT</button>' +
+          '<button class="keycap-btn edit-r-btn">EDIT</button>' +
           '<button class="keycap-btn primary start-btn">START</button>' +
           '<button class="keycap-btn danger del-btn" title="Delete Routine" aria-label="Delete Routine">✕</button>' +
         '</div>' +
       '</div>';
 
     card.querySelector(".routine-category-badge").textContent =
-      isCustom ? "★ MY CUSTOM ROUTINE" : (r.category || "WORKOUT SPLIT");
+      isCustom ? "CUSTOM ROUTINE" : (r.category || "WORKOUT SPLIT");
     card.querySelector("h3").textContent = r.name;
 
     card.querySelector(".prev-btn").addEventListener("click", function (e) {
@@ -489,9 +795,10 @@ function renderWorkoutTab() {
       startRoutine(r);
     });
 
-    card.querySelector(".del-btn").addEventListener("click", function (e) {
+    card.querySelector(".del-btn").addEventListener("click", async function (e) {
       e.stopPropagation();
-      if (confirm('Delete routine "' + r.name + '"?')) {
+      const ok = await appConfirm("DELETE ROUTINE", 'Permanently delete routine "' + r.name + '"?', "DELETE");
+      if (ok) {
         const all = getRoutines();
         const globalIndex = all.findIndex(item => item.id === r.id);
         if (globalIndex !== -1) {
@@ -510,11 +817,11 @@ function renderWorkoutTab() {
   });
 }
 
-// ---------- Split Preview Modal Controller ----------
 let activePreviewRoutine = null;
 function openRoutinePreview(r) {
   activePreviewRoutine = r;
-  $("prevCatBadge").textContent = (r.category || "CUSTOM ROUTINE").toUpperCase();
+  const estMin = typeof estimateWorkoutMinutes === "function" ? estimateWorkoutMinutes(r.exercises) : 45;
+  $("prevCatBadge").textContent = ((r.category || "CUSTOM ROUTINE") + "  ·  EST. TIME: ~" + estMin + " MIN").toUpperCase();
   $("prevRoutineTitle").textContent = r.name;
   $("prevRoutineDesc").textContent = r.description || "Structured workout routine ready for progressive overload logging.";
 
@@ -531,13 +838,13 @@ function openRoutinePreview(r) {
 
     const nameDiv = document.createElement("div");
     nameDiv.className = "preview-ex-name";
-    nameDiv.textContent = pad(idx + 1) + ". " + exNameStr;
+    nameDiv.textContent = pad(idx + 1) + ". " + exNameStr + (item.isSuperset ? " [SS]" : "");
 
     const metaDiv = document.createElement("div");
     metaDiv.className = "preview-ex-meta";
     metaDiv.innerHTML =
       '<span class="equip-badge">' + esc(equip) + '</span>' +
-      '<span class="sets-badge">' + esc(setsCount + (item.reps ? " × " + item.reps : " SETS")) + '</span>';
+      '<span class="sets-badge">' + esc(setsCount + (item.reps ? " x " + item.reps : " SETS")) + '</span>';
 
     row.appendChild(nameDiv);
     row.appendChild(metaDiv);
@@ -667,7 +974,7 @@ function updatePlateCalculatorView() {
   res.perSide.forEach(p => { counts[p] = (counts[p] || 0) + 1; });
   const breakdownStr = Object.keys(counts)
     .sort((a, b) => Number(b) - Number(a))
-    .map(p => p + " " + unit.toUpperCase() + " × " + counts[p])
+    .map(p => p + " " + unit.toUpperCase() + " x " + counts[p])
     .join("  +  ");
 
   const summary = document.createElement("div");
@@ -723,9 +1030,9 @@ function openExerciseInfo(exId) {
   guideBox.innerHTML = "";
   if (guide) {
     const items = [
-      { label: "1. SETUP & POSTURE", text: guide.setup },
-      { label: "2. EXECUTION CUE", text: guide.cue },
-      { label: "3. COMMON MISTAKE TO AVOID", text: guide.mistake }
+      { label: "01 // SETUP & POSTURE", text: guide.setup },
+      { label: "02 // EXECUTION CUE", text: guide.cue },
+      { label: "03 // MISTAKE TO AVOID", text: guide.mistake }
     ];
     items.forEach(item => {
       const div = document.createElement("div");
@@ -804,7 +1111,7 @@ function updateHeroStats() {
     if (weekStart(d) === thisWeek) {
       weekVol += workoutVolume(w);
       (w.exercises || []).forEach(function (e) {
-        weekSets += (e.sets || []).filter(s => s.type !== "W").length;
+        weekSets += (e.sets || []).filter(s => s.type !== "W" && s.lifter !== "p2").length;
       });
     }
   });
@@ -819,7 +1126,7 @@ function updateHeroStats() {
 
   $("heroVolume").textContent = showWeight(weekVol).toLocaleString();
   $("heroUnit").textContent = unitName().toUpperCase();
-  $("heroStreak").textContent = streak + " WEEK" + (streak === 1 ? "" : "S") + " STREAK 🔥";
+  $("heroStreak").textContent = streak + " WEEK" + (streak === 1 ? "" : "S") + " STREAK";
   $("heroWorkouts").textContent = hist.length;
   $("heroSets").textContent = weekSets;
   $("heroPrs").textContent = totalPrCount;
@@ -827,27 +1134,44 @@ function updateHeroStats() {
 }
 
 // =====================================================
-//  ACTIVE WORKOUT COCKPIT
+//  ACTIVE WORKOUT COCKPIT & A1/A2 SUPERSET GROUPING
 // =====================================================
 function syncCockpitModeUI() {
   const modeTag = $("workoutModeTag");
   const finishBtn = $("finishBtn");
   const miniLabel = $("miniHudLabel");
-  applyRpeVisibility(getSettings().showRpe);
+  const editMetaRow = $("wEditMetaRow");
+  const footerActions = $("wFooterActions");
+  const s = getSettings();
+
+  applyExperienceMode(s.experienceMode);
+  applyRpeVisibility(s.showRpe);
+  syncMuteTimerUI();
+
+  if (editMetaRow && editingWorkoutId) {
+    editMetaRow.classList.remove("hidden");
+  }
+  if (footerActions) {
+    const saveAsBtn = $("saveRoutineBtn");
+    if (saveAsBtn) saveAsBtn.classList.toggle("hidden", !!editingRoutineId);
+  }
 
   if (editingRoutineId) {
-    if (modeTag) modeTag.textContent = "ROUTINE EDIT";
-    if (finishBtn) finishBtn.textContent = "SAVE ROUTINE";
+    if (modeTag) modeTag.textContent = editingRoutineId === "__NEW__" ? "NEW" : "EDIT";
+    if (finishBtn) finishBtn.textContent = "SAVE";
     if (miniLabel) miniLabel.textContent = "EDITING ROUTINE";
   } else if (editingWorkoutId) {
-    if (modeTag) modeTag.textContent = "EDITING LOG";
-    if (finishBtn) finishBtn.textContent = "SAVE CHANGES";
+    if (modeTag) modeTag.textContent = "EDIT";
+    if (finishBtn) finishBtn.textContent = "SAVE";
     if (miniLabel) miniLabel.textContent = "EDITING LOG";
   } else {
     if (modeTag) modeTag.textContent = "LIVE";
     if (finishBtn) finishBtn.textContent = "FINISH";
     if (miniLabel) miniLabel.textContent = "ACTIVE WORKOUT";
   }
+
+  updateWorkoutTargetTimeUI();
+  updateDuoBarUI();
 }
 
 function openWorkoutScreen() {
@@ -870,7 +1194,22 @@ function updateMiniBar() {
   $("miniBar").classList.toggle("hidden", !(workoutActive && !screenOpen));
 }
 
+// Fixed Bug #3: Shows "EDIT LOG" instead of "72:14:30" when editing a past workout!
 function updateClock() {
+  if (editingRoutineId) {
+    $("wClock").textContent = "BUILDER";
+    $("miniClock").textContent = "BUILDER";
+    const rc = $("resumeClock");
+    if (rc) rc.textContent = "BUILDER";
+    return;
+  }
+  if (editingWorkoutId) {
+    $("wClock").textContent = "EDIT LOG";
+    $("miniClock").textContent = "EDIT LOG";
+    const rc = $("resumeClock");
+    if (rc) rc.textContent = "EDIT LOG";
+    return;
+  }
   const total = Math.max(0, Math.floor((Date.now() - workoutStart) / 1000));
   const text = pad(Math.floor(total / 3600)) + ":" +
     pad(Math.floor((total % 3600) / 60)) + ":" + pad(total % 60);
@@ -886,12 +1225,11 @@ function startClock() {
   clockId = setInterval(updateClock, 1000);
 }
 
-// ---------- Rest Timer Engine ----------
 function tickRest() {
   const left = Math.ceil((restEnd - Date.now()) / 1000);
   if (left <= 0) {
     clearInterval(restId);
-    $("timer").textContent = "REST COMPLETE!";
+    $("timer").textContent = "REST COMPLETE";
     if (navigator.vibrate) navigator.vibrate([300, 100, 300]);
     playTimerFinishedBeep();
     return;
@@ -901,6 +1239,7 @@ function tickRest() {
 
 function startTimer(seconds) {
   restEnd = Date.now() + seconds * 1000;
+  syncMuteTimerUI();
   $("timerBox").classList.remove("hidden");
   clearInterval(restId);
   restId = setInterval(tickRest, 250);
@@ -917,7 +1256,6 @@ function stopTimer() {
   $("timerBox").classList.add("hidden");
 }
 
-// ---------- Auto-Save Draft ----------
 function saveDraft() {
   if (!workoutActive) return;
   const exercises = [];
@@ -926,9 +1264,10 @@ function saveDraft() {
     card.querySelectorAll(".setRow").forEach(function (row) {
       const kgInput = row.querySelector(".kgInput");
       sets.push({
-        kg: kgInput ? kgInput.value : "",
+        displayWeight: kgInput ? kgInput.value : "",
         reps: row.querySelector(".repsInput").value,
         rpe: row.dataset.rpe ? Number(row.dataset.rpe) : null,
+        lifter: row.dataset.lifter || "p1",
         done: row.querySelector(".doneBox").classList.contains("checked"),
         type: row.dataset.type
       });
@@ -944,6 +1283,9 @@ function saveDraft() {
     startTime: workoutStart,
     editingWorkoutId: editingWorkoutId,
     editingRoutineId: editingRoutineId,
+    duoPartnerName: duoPartnerName,
+    editDateVal: $("wDateInput") ? $("wDateInput").value : "",
+    editDurationMin: $("wDurationInput") ? $("wDurationInput").value : "",
     title: $("wTitle").value,
     notes: $("wNotes").value,
     unit: unitName(),
@@ -972,12 +1314,27 @@ function restoreDraft() {
   workoutStart = d.startTime || Date.now();
   editingWorkoutId = d.editingWorkoutId || null;
   editingRoutineId = d.editingRoutineId || null;
+  duoPartnerName = d.duoPartnerName || null;
   $("wTitle").value = d.title || "";
   $("wNotes").value = d.notes || "";
+  if ($("wDateInput") && d.editDateVal) $("wDateInput").value = d.editDateVal;
+  if ($("wDurationInput") && d.editDurationMin) $("wDurationInput").value = d.editDurationMin;
+
   $("exerciseList").innerHTML = "";
   d.exercises.forEach(function (ex) {
-    addExerciseCard(ex.exId, 0, ex.sets, ex.isSuperset, ex.targetReps);
+    const normalizedSets = (ex.sets || []).map(function (s) {
+      return {
+        displayWeight: s.displayWeight !== undefined ? s.displayWeight : (s.kg !== undefined ? s.kg : ""),
+        reps: s.reps,
+        rpe: s.rpe || null,
+        lifter: s.lifter || "p1",
+        done: !!s.done,
+        type: s.type || "N"
+      };
+    });
+    addExerciseCard(ex.exId, 0, normalizedSets, ex.isSuperset, ex.targetReps);
   });
+  renumberSupersetBadges();
   syncCockpitModeUI();
   startClock();
   requestWakeLock();
@@ -1003,10 +1360,10 @@ function syncActiveWorkoutUnits(oldUnit, newUnit) {
     const strip = card.querySelector(".auto-target-strip");
     if (strip) strip.textContent = generateAutoTargetHint(exId, targetReps);
 
-    const stepWtBtn = card.querySelector(".step-wt-btn");
-    if (stepWtBtn) {
-      stepWtBtn.textContent = "+" + (newUnit === "lbs" ? "5 LB" : "2.5 KG");
-    }
+    const stepMinusWtBtn = card.querySelector(".step-minus-wt-btn");
+    const stepPlusWtBtn = card.querySelector(".step-wt-btn");
+    if (stepMinusWtBtn) stepMinusWtBtn.textContent = "-" + (newUnit === "lbs" ? "5" : "2.5");
+    if (stepPlusWtBtn) stepPlusWtBtn.textContent = "+" + (newUnit === "lbs" ? "5 LB" : "2.5 KG");
 
     const previous = getPrevious(exId, editingWorkoutId);
     card.querySelectorAll(".setRow").forEach(function (row, i) {
@@ -1016,13 +1373,15 @@ function syncActiveWorkoutUnits(oldUnit, newUnit) {
       }
       const prev = previous[i];
       const prevSpan = row.querySelector(".set-prev-hint");
-      if (prev && prevSpan) {
-        if (type === "time") prevSpan.textContent = prev.reps + "s ↵";
-        else if (type === "reps") prevSpan.textContent = prev.reps + "r ↵";
-        else prevSpan.textContent = showWeight(prev.kg) + "×" + prev.reps + " ↵";
+      if (prev && prevSpan && row.dataset.lifter !== "p2") {
+        const rpeSuffix = prev.rpe ? (" @" + prev.rpe) : "";
+        if (type === "time") prevSpan.textContent = prev.reps + "s" + rpeSuffix;
+        else if (type === "reps") prevSpan.textContent = prev.reps + "r" + rpeSuffix;
+        else prevSpan.textContent = showWeight(prev.kg) + "x" + prev.reps + rpeSuffix;
       }
     });
   });
+  updateDuoBarUI();
   saveDraft();
 }
 
@@ -1036,6 +1395,8 @@ function startWorkout() {
   workoutStart = Date.now();
   editingWorkoutId = null;
   editingRoutineId = null;
+  duoPartnerName = null;
+  duoActiveLifter = "p1";
 
   const hour = new Date().getHours();
   let part = "Evening";
@@ -1043,6 +1404,9 @@ function startWorkout() {
   else if (hour < 17) part = "Afternoon";
   $("wTitle").value = part + " Workout";
   $("wNotes").value = "";
+  if ($("wDateInput")) $("wDateInput").value = toDateInputValue(workoutStart);
+  if ($("wDurationInput")) $("wDurationInput").value = "";
+  if ($("wEditMetaRow")) $("wEditMetaRow").classList.add("hidden");
   $("exerciseList").innerHTML = "";
 
   stopTimer();
@@ -1057,9 +1421,36 @@ function startRoutine(r) {
   if (!startWorkout()) return;
   $("wTitle").value = r.name;
   (r.exercises || []).forEach(function (ex) {
-    addExerciseCard(ex.exId, ex.sets, null, false, ex.reps || "");
+    addExerciseCard(ex.exId, ex.sets, null, !!ex.isSuperset, ex.reps || "");
   });
+  renumberSupersetBadges();
+  updateWorkoutTargetTimeUI();
   saveDraft();
+}
+
+async function startNewRoutineBuilder() {
+  if (workoutActive) {
+    openWorkoutScreen();
+    showToast("Finish or discard your active session before building a routine.");
+    return;
+  }
+  workoutActive = true;
+  workoutStart = Date.now();
+  editingWorkoutId = null;
+  editingRoutineId = "__NEW__";
+  duoPartnerName = null;
+  duoActiveLifter = "p1";
+
+  $("wTitle").value = "My Custom Routine";
+  $("wNotes").value = "";
+  if ($("wEditMetaRow")) $("wEditMetaRow").classList.add("hidden");
+  $("exerciseList").innerHTML = "";
+
+  stopTimer();
+  startClock();
+  saveDraft();
+  openWorkoutScreen();
+  showToast("Routine Builder: Tap + ADD EXERCISE to assemble your plan.");
 }
 
 function startEditRoutine(r) {
@@ -1072,20 +1463,24 @@ function startEditRoutine(r) {
   workoutStart = Date.now();
   editingWorkoutId = null;
   editingRoutineId = r.id;
+  duoPartnerName = null;
+  duoActiveLifter = "p1";
 
   $("wTitle").value = r.name;
   $("wNotes").value = r.description || "";
+  if ($("wEditMetaRow")) $("wEditMetaRow").classList.add("hidden");
   $("exerciseList").innerHTML = "";
 
   (r.exercises || []).forEach(function (ex) {
-    addExerciseCard(ex.exId, ex.sets || 3, null, false, ex.reps || "8-10");
+    addExerciseCard(ex.exId, ex.sets || 3, null, !!ex.isSuperset, ex.reps || "8-10");
   });
+  renumberSupersetBadges();
 
   stopTimer();
   startClock();
   saveDraft();
   openWorkoutScreen();
-  showToast("Editing routine: Add/remove exercises or sets, then tap SAVE ROUTINE.");
+  showToast("Editing routine: Adjust exercises, sets, or target reps, then tap SAVE.");
 }
 
 function editHistoryWorkout(w) {
@@ -1098,29 +1493,35 @@ function editHistoryWorkout(w) {
   workoutStart = w.ts || Date.now();
   editingWorkoutId = w.id;
   editingRoutineId = null;
+  duoPartnerName = w.partnerName || null;
+  duoActiveLifter = "p1";
 
   $("wTitle").value = w.title || "Strength Session";
   $("wNotes").value = w.notes || "";
+  if ($("wDateInput")) $("wDateInput").value = toDateInputValue(w.ts || Date.now());
+  if ($("wDurationInput")) $("wDurationInput").value = Math.max(1, Math.round((w.duration || 45 * 60000) / 60000));
   $("exerciseList").innerHTML = "";
 
   (w.exercises || []).forEach(function (ex) {
     const savedSets = (ex.sets || []).map(function (s) {
       return {
-        kg: exTypeOf(ex.exId) === "weight" ? showWeight(s.kg) : "",
+        displayWeight: exTypeOf(ex.exId) === "weight" ? String(showWeight(s.kg)) : "",
         reps: s.reps,
         rpe: s.rpe || null,
+        lifter: s.lifter || "p1",
         done: true,
         type: s.type || "N"
       };
     });
-    addExerciseCard(ex.exId, Math.max(savedSets.length, 1), savedSets, ex.isSuperset);
+    addExerciseCard(ex.exId, Math.max(savedSets.length, 1), savedSets, !!ex.isSuperset);
   });
+  renumberSupersetBadges();
 
   stopTimer();
   startClock();
   saveDraft();
   openWorkoutScreen();
-  showToast("Editing past workout log. Tap SAVE CHANGES when done.");
+  showToast("Editing past workout log.");
 }
 
 function repeatHistoryWorkout(w) {
@@ -1128,25 +1529,30 @@ function repeatHistoryWorkout(w) {
   $("wTitle").value = w.title || "Strength Session";
   $("wNotes").value = w.notes || "";
   (w.exercises || []).forEach(function (ex) {
-    const templateSets = (ex.sets || []).map(function (s) {
+    const templateSets = (ex.sets || []).filter(s => s.lifter !== "p2").map(function (s) {
       return {
-        kg: exTypeOf(ex.exId) === "weight" ? showWeight(s.kg) : "",
+        displayWeight: exTypeOf(ex.exId) === "weight" ? String(showWeight(s.kg)) : "",
         reps: s.reps,
         rpe: null,
+        lifter: "p1",
         done: false,
         type: s.type || "N"
       };
     });
-    addExerciseCard(ex.exId, Math.max(templateSets.length, 1), templateSets, ex.isSuperset);
+    addExerciseCard(ex.exId, Math.max(templateSets.length, 1), templateSets, !!ex.isSuperset);
   });
+  renumberSupersetBadges();
+  updateWorkoutTargetTimeUI();
   saveDraft();
-  showToast("Loaded workout template from history!");
+  showToast("Workout template loaded.");
 }
 
 function endWorkoutUI() {
   workoutActive = false;
   editingWorkoutId = null;
   editingRoutineId = null;
+  duoPartnerName = null;
+  duoActiveLifter = "p1";
   clearInterval(clockId);
   stopTimer();
   releaseWakeLock();
@@ -1158,14 +1564,14 @@ function endWorkoutUI() {
 function generateAutoTargetHint(exId, routineTargetReps) {
   const type = exTypeOf(exId);
   const prevSets = getPrevious(exId, editingWorkoutId);
-  const workingSets = prevSets.filter(s => s.type !== "W");
+  const workingSets = prevSets.filter(s => s.type !== "W" && s.lifter !== "p2");
   const repRangeLabel = routineTargetReps ? " (Goal: " + routineTargetReps + ")" : "";
 
   if (workingSets.length === 0) {
     if (type === "time") {
-      return "💡 First Session: Hold for " + (routineTargetReps || "45-60s") + " with strict form.";
+      return "FIRST SESSION: Hold for " + (routineTargetReps || "45-60s") + " with strict form.";
     }
-    return "💡 First Session: Choose a controlled weight for " + (routineTargetReps || "8-10") + " reps to set your baseline.";
+    return "FIRST SESSION: Choose a controlled weight for " + (routineTargetReps || "8-10") + " reps to set your baseline.";
   }
 
   const isPlateau = typeof detectPlateau === "function" && detectPlateau(exId, editingWorkoutId);
@@ -1174,60 +1580,57 @@ function generateAutoTargetHint(exId, routineTargetReps) {
     let maxSec = 0;
     workingSets.forEach(s => { if (Number(s.reps) > maxSec) maxSec = Number(s.reps); });
     if (isPlateau) {
-      return "🚨 Plateau Alert: Stuck at " + maxSec + "s for 3 sessions! Add 1 extra set or slow down your breathing today.";
+      return "PLATEAU ALERT: Held " + maxSec + "s for 3 sessions. Add 1 extra set or slow down breathing.";
     }
-    return "💡 Target: Last longest hold was " + maxSec + " sec. Aim for " + (maxSec + 5) + " sec today!";
+    return "TARGET: Last best hold was " + maxSec + " sec. Aim for " + (maxSec + 5) + " sec today.";
   }
 
   if (type === "reps") {
     let maxReps = 0;
     workingSets.forEach(s => { if (Number(s.reps) > maxReps) maxReps = Number(s.reps); });
     if (isPlateau) {
-      return "🚨 Plateau Alert: Stuck at " + maxReps + " reps for 3 sessions! Try a 2-second pause at the top or add a Drop Set [D].";
+      return "PLATEAU ALERT: Stuck at " + maxReps + " reps for 3 sessions. Add a 2s pause or a Drop Set [D].";
     }
-    return "💡 Target: Last best was " + maxReps + " reps. Aim for " + (maxReps + 1) + " reps today!" + repRangeLabel;
+    return "TARGET: Last best was " + maxReps + " reps. Aim for " + (maxReps + 1) + " reps today." + repRangeLabel;
   }
 
-  let topWeight = 0;
+  let topWeightKg = 0;
   let topReps = 0;
   let topRpe = null;
   workingSets.forEach(s => {
     const k = Number(s.kg) || 0;
     const r = Number(s.reps) || 0;
-    if (k > topWeight || (k === topWeight && r > topReps)) {
-      topWeight = k;
+    if (k > topWeightKg || (k === topWeightKg && r > topReps)) {
+      topWeightKg = k;
       topReps = r;
       topRpe = s.rpe ? Number(s.rpe) : null;
     }
   });
 
   const unit = unitName().toUpperCase();
-  const shownLastWeight = unitName() === "lbs"
-    ? Math.round(Number(topWeight) * 2.20462)
-    : showWeight(topWeight);
+  const shownLast = showWeight(topWeightKg);
 
   if (isPlateau) {
-    return "🚨 Plateau Alert: Stuck at " + shownLastWeight + " " + unit + " × " + topReps +
-      " for 3 sessions! Tap ⇄ SWAP for a dumbbell/cable variation or add 1 Drop Set [D] today.";
+    return "PLATEAU ALERT: Stuck at " + shownLast + " " + unit + " x " + topReps +
+      " for 3 sessions. Tap SWAP for a variation or add a Drop Set [D].";
   }
 
   if (topRpe && topRpe >= 10) {
-    return "💡 Target: Last set was RPE 10 (" + shownLastWeight + " " + unit + " × " + topReps +
-      "). Keep " + shownLastWeight + " " + unit + " today and aim for smoother reps (RPE 8-9).";
+    return "TARGET: Last set was RPE 10 (" + shownLast + " " + unit + " x " + topReps +
+      "). Keep " + shownLast + " " + unit + " today and build smoother control.";
   }
 
   if (topReps < 10) {
-    const nextReps = topReps + 1;
-    return "💡 Target: Last best was " + shownLastWeight + " " + unit + " × " + topReps +
-      ". Keep " + shownLastWeight + " " + unit + " and hit " + nextReps + "+ reps before adding weight.";
+    return "TARGET: Last best was " + shownLast + " " + unit + " x " + topReps +
+      ". Keep " + shownLast + " " + unit + " and hit " + (topReps + 1) + "+ reps before adding weight.";
   }
 
   if (unitName() === "lbs") {
-    const targetLbs = Math.round((shownLastWeight + 5) / 5) * 5;
-    return "💡 Target: You hit " + shownLastWeight + " LBS × " + topReps + " last time! Move up to " + targetLbs + " LBS × 8 reps today.";
+    const targetLbs = Math.round((shownLast + 5) / 5) * 5;
+    return "TARGET: Hit " + shownLast + " LBS x " + topReps + " last time. Move up to " + targetLbs + " LBS x 8 reps.";
   } else {
-    const targetKg = showWeight(topWeight + 2.5);
-    return "💡 Target: You hit " + shownLastWeight + " KG × " + topReps + " last time! Move up to " + targetKg + " KG × 8 reps today.";
+    const targetKg = showWeight(topWeightKg + 2.5);
+    return "TARGET: Hit " + shownLast + " KG x " + topReps + " last time. Move up to " + targetKg + " KG x 8 reps.";
   }
 }
 
@@ -1238,22 +1641,58 @@ function renumberCardIndices() {
   });
 }
 
-// ---------- Exercise Card inside Live Workout ----------
+function renumberSupersetBadges() {
+  const cards = Array.prototype.slice.call(document.querySelectorAll("#exerciseList .exCard"));
+  let groupIdx = 0;
+  let subIdx = 0;
+  let inChain = false;
+
+  cards.forEach(function (card, i) {
+    const badge = card.querySelector(".superset-badge");
+    const isLinkedToNext = card.classList.contains("isSuperset") && cards[i + 1];
+    const prevWasLinked = i > 0 && cards[i - 1].classList.contains("isSuperset");
+
+    if (isLinkedToNext || prevWasLinked) {
+      if (!inChain) {
+        inChain = true;
+        subIdx = 1;
+      } else {
+        subIdx++;
+      }
+      const letter = String.fromCharCode(65 + (groupIdx % 26));
+      if (badge) {
+        badge.textContent = letter + subIdx;
+        badge.classList.remove("hidden");
+      }
+      if (!isLinkedToNext) {
+        inChain = false;
+        groupIdx++;
+      }
+    } else {
+      if (badge) badge.classList.add("hidden");
+    }
+  });
+}
+
+// ---------- Exercise Card inside Live Workout (With Set 1 -> 2/3 Auto-Cascade & Live PR Badges!) ----------
 function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNotAppend) {
   const ex = getExercise(exId);
   if (!ex) return null;
   const type = exTypeOf(exId);
+  const equip = exEquipmentOf(exId);
   const isNoWeight = (type === "reps" || type === "time");
+  const isPlateLoaded = (equip === "Barbell" || equip === "Smith Machine");
   const previous = getPrevious(exId, editingWorkoutId);
   const pinnedNote = getExerciseNote(exId);
-  const historicalBest = getStats(getAllSets(exId, editingWorkoutId));
+  const runningBest = Object.assign({}, getStats(getAllSets(exId, editingWorkoutId)));
 
   const card = document.createElement("div");
   card.className = "exCard" + (isNoWeight ? " repsOnly" : "") + (isSuperset ? " isSuperset" : "");
   card.dataset.exid = exId;
-  card.dataset.targetreps = targetReps || "";
+  card.dataset.targetreps = targetReps || (type === "time" ? "45-60s" : "8-10");
 
   const repColHeader = type === "time" ? "SEC" : "REPS";
+  const stepUnitNum = unitName() === "lbs" ? "5" : "2.5";
   const stepWtLabel = "+" + (unitName() === "lbs" ? "5 LB" : "2.5 KG");
 
   card.innerHTML =
@@ -1261,25 +1700,30 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
       '<div class="exHeadTopRow">' +
         '<div class="exHeadLeft">' +
           '<span class="ex-index">01</span>' +
+          '<span class="superset-badge hidden">A1</span>' +
           '<h3></h3>' +
         '</div>' +
       '</div>' +
       '<div class="exActions">' +
-        '<button class="info-ex-btn" title="Form Guide, YouTube Demo & Exercise History">ⓘ INFO</button>' +
-        '<button class="swap-ex-btn" title="Swap Exercise">⇄ SWAP</button>' +
-        '<button class="action-icon-btn moveUpBtn" title="Move Up" aria-label="Move Exercise Up">▲</button>' +
-        '<button class="action-icon-btn moveDownBtn" title="Move Down" aria-label="Move Exercise Down">▼</button>' +
-        '<button class="superset-btn' + (isSuperset ? ' active' : '') + '" title="Link Next Exercise as Superset">⚡ SUPERSET</button>' +
-        '<button class="remove-ex-btn" title="Remove Exercise" aria-label="Remove Exercise">✕</button>' +
+        '<button class="info-ex-btn" title="Form Guide & History">INFO</button>' +
+        '<button class="swap-ex-btn" title="Swap Exercise">SWAP</button>' +
+        (isNoWeight ? '' : '<button class="util-pill-btn step-minus-wt-btn" title="Decrease weight">-' + stepUnitNum + '</button>') +
+        (isNoWeight ? '' : '<button class="util-pill-btn step-wt-btn" title="Increase weight">' + esc(stepWtLabel) + '</button>') +
+        '<button class="util-pill-btn step-minus-rep-btn" title="Decrease rep">-1</button>' +
+        '<button class="util-pill-btn step-rep-btn" title="Increase rep/sec">+1 ' + repColHeader + '</button>' +
+        '<button class="tools-toggle-btn" title="More Tools">•••</button>' +
       '</div>' +
-      '<div class="ex-utility-bar">' +
-        '<button class="util-pill-btn rest-pill-btn" title="Set Custom Rest Timer for this Exercise"></button>' +
-        (isNoWeight ? '' : '<button class="util-pill-btn plate-pill-btn" title="Open Barbell Plate Calculator">🏋️ PLATES</button>') +
-        (isNoWeight ? '' : '<button class="util-pill-btn warmup-pill-btn" title="Generate Progressive Warm-Up Sets">🔥 + WARM-UP</button>') +
-        (isNoWeight ? '' : '<button class="util-pill-btn step-wt-btn" title="Quick add weight to active set">' + esc(stepWtLabel) + '</button>') +
-        '<button class="util-pill-btn step-rep-btn" title="Quick add +1 rep/sec to active set">+1 ' + repColHeader + '</button>' +
+      '<div class="ex-tools-drawer hidden">' +
+        '<button class="util-pill-btn rest-pill-btn" title="Custom Rest Timer"></button>' +
+        (isPlateLoaded ? '<button class="util-pill-btn plate-pill-btn" title="Barbell Plate Calculator">PLATES</button>' : '') +
+        (isNoWeight ? '' : '<button class="util-pill-btn warmup-pill-btn adv-only" title="Generate Warm-Up Sets">+ WARMUP</button>') +
+        '<button class="superset-btn adv-only' + (isSuperset ? ' active' : '') + '" title="Link Next Exercise as Superset">SUPERSET</button>' +
+        '<button class="util-pill-btn target-reps-btn" title="Set Routine Target Rep Range">GOAL: ' + esc(card.dataset.targetreps) + '</button>' +
+        '<button class="action-icon-btn moveUpBtn" title="Move Up" aria-label="Move Up">▲</button>' +
+        '<button class="action-icon-btn moveDownBtn" title="Move Down" aria-label="Move Down">▼</button>' +
+        '<button class="remove-ex-btn" title="Remove Exercise">REMOVE</button>' +
       '</div>' +
-      '<input type="text" class="ex-pinned-note" placeholder="📌 Pinned note (e.g. Seat #4, grip width)...">' +
+      '<input type="text" class="ex-pinned-note" placeholder="Pinned note (e.g. Seat #4, grip width)...">' +
     '</div>' +
     '<div class="auto-target-strip"></div>' +
     '<div class="setHead">' +
@@ -1296,21 +1740,50 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
 
   card.querySelector("h3").textContent = ex.name;
   const targetStrip = card.querySelector(".auto-target-strip");
-  const hintText = generateAutoTargetHint(exId, targetReps);
+  const hintText = generateAutoTargetHint(exId, card.dataset.targetreps);
   targetStrip.textContent = hintText;
-  if (hintText.startsWith("🚨")) targetStrip.classList.add("plateau-alert");
+  if (hintText.startsWith("PLATEAU")) targetStrip.classList.add("plateau-alert");
 
+  const toolsBtn = card.querySelector(".tools-toggle-btn");
+  const toolsDrawer = card.querySelector(".ex-tools-drawer");
+  toolsBtn.addEventListener("click", function () {
+    const isHidden = toolsDrawer.classList.contains("hidden");
+    toolsDrawer.classList.toggle("hidden", !isHidden);
+    toolsBtn.classList.toggle("open", isHidden);
+  });
+
+  // Target Rep Range Editor inside Tools Drawer
+  const targetRepsBtn = card.querySelector(".target-reps-btn");
+  if (targetRepsBtn) {
+    targetRepsBtn.addEventListener("click", async function () {
+      const nextGoal = await appPrompt(
+        "TARGET REP RANGE",
+        "Set target reps for " + ex.name + " (e.g. 6-8, 8-10, 10-12, 12-15):",
+        card.dataset.targetreps,
+        "8-10"
+      );
+      if (nextGoal && nextGoal.trim()) {
+        card.dataset.targetreps = nextGoal.trim().slice(0, 12);
+        targetRepsBtn.textContent = "GOAL: " + card.dataset.targetreps;
+        targetStrip.textContent = generateAutoTargetHint(exId, card.dataset.targetreps);
+        renumberSets();
+        saveDraft();
+      }
+    });
+  }
+
+  // Pinned Note Always Visible Outside Drawer
   const noteInput = card.querySelector(".ex-pinned-note");
   noteInput.value = pinnedNote;
   noteInput.addEventListener("change", function () {
     saveExerciseNote(exId, noteInput.value);
-    showToast("Pinned note saved for " + ex.name);
+    showToast("Pinned note saved");
   });
 
   const restBtn = card.querySelector(".rest-pill-btn");
   function updateRestPillLabel() {
     const cRest = getExerciseCustomRest(exId);
-    restBtn.textContent = cRest > 0 ? ("⏱ REST: " + cRest + "s ★") : ("⏱ REST: " + getSettings().rest + "s");
+    restBtn.textContent = cRest > 0 ? ("REST: " + cRest + "s *") : ("REST: " + getSettings().rest + "s");
   }
   updateRestPillLabel();
 
@@ -1321,12 +1794,47 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
     const nextVal = cycle[nextIdx];
     saveExerciseRest(exId, nextVal);
     updateRestPillLabel();
+    updateWorkoutTargetTimeUI();
     showToast(nextVal > 0 ? ("Custom rest for " + ex.name + ": " + nextVal + "s") : ("Reset to default rest (" + getSettings().rest + "s)"));
   });
 
   const setsDiv = card.querySelector(".sets");
+  let lastFocusedRow = null;
 
-  function getActiveOrFirstUncheckedRow() {
+  // Auto-Cascade: Whatever you type in Set 1 cascades into empty Set 2 & Set 3 placeholders!
+  function cascadeSetPlaceholders() {
+    let lastKnownKg = "";
+    let lastKnownReps = "";
+    setsDiv.querySelectorAll(".setRow").forEach(function (row, idx) {
+      if (row.dataset.type === "W" || row.dataset.lifter === "p2") return;
+      const kgInp = row.querySelector(".kgInput");
+      const repsInp = row.querySelector(".repsInput");
+      const prev = previous[idx];
+
+      if (kgInp) {
+        if (kgInp.value.trim() !== "") {
+          lastKnownKg = kgInp.value.trim();
+        } else {
+          const fallbackKg = lastKnownKg !== "" ? lastKnownKg : (prev && prev.kg !== undefined ? String(showWeight(prev.kg)) : "0");
+          kgInp.placeholder = fallbackKg;
+          row.dataset.cascadekg = fallbackKg !== "0" ? fallbackKg : "";
+        }
+      }
+      if (repsInp) {
+        if (repsInp.value.trim() !== "") {
+          lastKnownReps = repsInp.value.trim();
+        } else {
+          const fallbackReps = lastKnownReps !== "" ? lastKnownReps : (prev && prev.reps ? String(prev.reps) : (type === "time" ? "sec" : "0"));
+          repsInp.placeholder = fallbackReps;
+          row.dataset.cascadereps = (fallbackReps !== "0" && fallbackReps !== "sec") ? fallbackReps : "";
+        }
+      }
+    });
+  }
+
+  // Focused-Row Aware Target Finder for -2.5 / +2.5 Steppers
+  function getTargetRowForStepper() {
+    if (lastFocusedRow && lastFocusedRow.parentNode === setsDiv) return lastFocusedRow;
     const rows = setsDiv.querySelectorAll(".setRow");
     for (let i = 0; i < rows.length; i++) {
       if (!rows[i].querySelector(".doneBox").classList.contains("checked")) return rows[i];
@@ -1334,63 +1842,88 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
     return rows[rows.length - 1] || null;
   }
 
-  const stepWtBtn = card.querySelector(".step-wt-btn");
-  if (stepWtBtn) {
-    stepWtBtn.addEventListener("click", function () {
-      const targetRow = getActiveOrFirstUncheckedRow();
-      if (!targetRow) return;
-      const kgInput = targetRow.querySelector(".kgInput");
-      if (!kgInput) return;
-      const rowIndex = Array.prototype.indexOf.call(setsDiv.children, targetRow);
-      const prev = previous[rowIndex >= 0 ? rowIndex : 0];
-      let curVal = kgInput.value.trim() !== "" ? Number(kgInput.value) : (prev && prev.kg ? showWeight(prev.kg) : 0);
-      const step = unitName() === "lbs" ? 5 : 2.5;
-      kgInput.value = Math.round((curVal + step) * 10) / 10;
-      saveDraft();
-    });
+  function adjustRowWeight(delta) {
+    const targetRow = getTargetRowForStepper();
+    if (!targetRow) return;
+    const kgInput = targetRow.querySelector(".kgInput");
+    if (!kgInput) return;
+    const baseVal = kgInput.value.trim() !== ""
+      ? Number(kgInput.value)
+      : (targetRow.dataset.cascadekg ? Number(targetRow.dataset.cascadekg) : 0);
+    const nextVal = Math.max(0, Math.round((baseVal + delta) * 10) / 10);
+    kgInput.value = nextVal;
+    cascadeSetPlaceholders();
+    saveDraft();
   }
 
-  const stepRepBtn = card.querySelector(".step-rep-btn");
-  if (stepRepBtn) {
-    stepRepBtn.addEventListener("click", function () {
-      const targetRow = getActiveOrFirstUncheckedRow();
-      if (!targetRow) return;
-      const repsInput = targetRow.querySelector(".repsInput");
-      if (!repsInput) return;
-      const rowIndex = Array.prototype.indexOf.call(setsDiv.children, targetRow);
-      const prev = previous[rowIndex >= 0 ? rowIndex : 0];
-      let curReps = repsInput.value.trim() !== "" ? Number(repsInput.value) : (prev && prev.reps ? Number(prev.reps) : 0);
-      const inc = type === "time" ? 5 : 1;
-      repsInput.value = Math.max(1, Math.round(curReps + inc));
-      saveDraft();
-    });
+  function adjustRowReps(delta) {
+    const targetRow = getTargetRowForStepper();
+    if (!targetRow) return;
+    const repsInput = targetRow.querySelector(".repsInput");
+    if (!repsInput) return;
+    const baseReps = repsInput.value.trim() !== ""
+      ? Number(repsInput.value)
+      : (targetRow.dataset.cascadereps ? Number(targetRow.dataset.cascadereps) : 0);
+    const nextReps = Math.max(1, Math.round(baseReps + delta));
+    repsInput.value = nextReps;
+    cascadeSetPlaceholders();
+    saveDraft();
   }
+
+  const stepMinusWtBtn = card.querySelector(".step-minus-wt-btn");
+  const stepPlusWtBtn = card.querySelector(".step-wt-btn");
+  const stepMinusRepBtn = card.querySelector(".step-minus-rep-btn");
+  const stepPlusRepBtn = card.querySelector(".step-rep-btn");
+
+  if (stepMinusWtBtn) stepMinusWtBtn.addEventListener("click", function () { adjustRowWeight(unitName() === "lbs" ? -5 : -2.5); });
+  if (stepPlusWtBtn) stepPlusWtBtn.addEventListener("click", function () { adjustRowWeight(unitName() === "lbs" ? 5 : 2.5); });
+  if (stepMinusRepBtn) stepMinusRepBtn.addEventListener("click", function () { adjustRowReps(type === "time" ? -5 : -1); });
+  if (stepPlusRepBtn) stepPlusRepBtn.addEventListener("click", function () { adjustRowReps(type === "time" ? 5 : 1); });
 
   function renumberSets() {
     let n = 0;
-    setsDiv.querySelectorAll(".setRow").forEach(function (row, i) {
+    let p1Idx = 0;
+    setsDiv.querySelectorAll(".setRow").forEach(function (row) {
       const t = row.dataset.type || "N";
       const btn = row.querySelector(".setTypeBtn");
-      if (t === "N") {
+      const isP2 = row.dataset.lifter === "p2";
+      row.classList.toggle("is-p2", isP2);
+
+      if (isP2) {
+        btn.textContent = "P2";
+      } else if (t === "N") {
         n++;
         btn.textContent = n;
       } else {
         btn.textContent = t;
       }
-      const prev = previous[i];
+
+      const prev = (!isP2 && t !== "W") ? previous[p1Idx] : null;
+      if (!isP2 && t !== "W") p1Idx++;
+
       const prevSpan = row.querySelector(".set-prev-hint");
-      if (prev) {
-        prevSpan.classList.add("clickable");
-        prevSpan.title = "Tap to copy previous weight & reps into this set";
-        if (type === "time") prevSpan.textContent = prev.reps + "s ↵";
-        else if (type === "reps") prevSpan.textContent = prev.reps + "r ↵";
-        else prevSpan.textContent = showWeight(prev.kg) + "×" + prev.reps + " ↵";
-      } else {
+      const prTagHtml = row.dataset.prtag ? ('<span class="set-pr-badge">PR</span>') : "";
+
+      if (isP2) {
         prevSpan.classList.remove("clickable");
         prevSpan.title = "";
-        prevSpan.textContent = targetReps ? ("Goal: " + targetReps) : "—";
+        prevSpan.textContent = (duoPartnerName ? duoPartnerName.toUpperCase() : "PARTNER");
+      } else if (prev) {
+        prevSpan.classList.add("clickable");
+        prevSpan.title = "Tap to copy into set";
+        const rpeSuffix = prev.rpe ? (" @" + prev.rpe) : "";
+        let txt = "";
+        if (type === "time") txt = prev.reps + "s" + rpeSuffix;
+        else if (type === "reps") txt = prev.reps + "r" + rpeSuffix;
+        else txt = showWeight(prev.kg) + "x" + prev.reps + rpeSuffix;
+        prevSpan.innerHTML = esc(txt) + prTagHtml;
+      } else {
+        prevSpan.classList.add("clickable");
+        prevSpan.title = "Tap to fill from above set";
+        prevSpan.innerHTML = esc("Goal: " + card.dataset.targetreps) + prTagHtml;
       }
     });
+    cascadeSetPlaceholders();
   }
 
   function addSet(saved, insertAtTop) {
@@ -1398,6 +1931,8 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
     row.className = "setRow";
     row.dataset.type = saved && saved.type ? saved.type : "N";
     row.dataset.rpe = saved && saved.rpe ? String(saved.rpe) : "";
+    row.dataset.lifter = (saved && saved.lifter) ? saved.lifter : (duoPartnerName ? duoActiveLifter : "p1");
+    row.dataset.prtag = "";
 
     row.innerHTML =
       '<button class="setTypeBtn" title="Tap to cycle Set Type: Normal, Warm-up (W), Drop (D), Failure (F)">1</button>' +
@@ -1408,17 +1943,38 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
       '<button class="doneBox" aria-label="Complete Set">✓</button>' +
       '<button class="delSetBtn" title="Delete Set" aria-label="Delete Set">✕</button>';
 
+    // Track focused row and auto-cascade on typing
+    row.querySelectorAll("input").forEach(function (inp) {
+      inp.addEventListener("focus", function () { lastFocusedRow = row; });
+      inp.addEventListener("input", function () {
+        lastFocusedRow = row;
+        cascadeSetPlaceholders();
+        saveDraft();
+      });
+    });
+
+    // Clicking PREV or Goal copies previous/cascaded values into the inputs
     const prevSpan = row.querySelector(".set-prev-hint");
     prevSpan.addEventListener("click", function () {
-      const rowIndex = Array.prototype.indexOf.call(setsDiv.children, row);
-      const prev = previous[rowIndex >= 0 ? rowIndex : 0];
-      if (!prev) return;
+      lastFocusedRow = row;
+      if (row.dataset.lifter === "p2") return;
       const kgInput = row.querySelector(".kgInput");
       const repsInput = row.querySelector(".repsInput");
-      if (kgInput && prev.kg !== undefined) kgInput.value = showWeight(prev.kg);
-      if (repsInput && prev.reps !== undefined) repsInput.value = prev.reps;
+      const p1Rows = Array.prototype.filter.call(setsDiv.children, r => r.dataset.lifter !== "p2" && r.dataset.type !== "W");
+      const idx = p1Rows.indexOf(row);
+      const prev = previous[idx >= 0 ? idx : 0];
+
+      if (kgInput) {
+        if (row.dataset.cascadekg) kgInput.value = row.dataset.cascadekg;
+        else if (prev && prev.kg !== undefined) kgInput.value = showWeight(prev.kg);
+      }
+      if (repsInput) {
+        if (row.dataset.cascadereps) repsInput.value = row.dataset.cascadereps;
+        else if (prev && prev.reps !== undefined) repsInput.value = prev.reps;
+      }
+      cascadeSetPlaceholders();
       saveDraft();
-      showToast("Copied previous set ✓");
+      showToast("Set values filled");
     });
 
     const rpeBtn = row.querySelector(".rpeBtn");
@@ -1443,29 +1999,43 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
     });
 
     row.querySelector(".setTypeBtn").addEventListener("click", function () {
-      const order = ["N", "W", "D", "F"];
+      if (duoPartnerName && row.dataset.lifter === "p2") {
+        row.dataset.lifter = "p1";
+        showToast("Assigned set to " + getAthleteProfile().name);
+        renumberSets();
+        updateDuoBarUI();
+        saveDraft();
+        return;
+      }
+      const isSimple = document.documentElement.getAttribute("data-exp") === "simple";
+      const order = isSimple ? ["N", "W"] : ["N", "W", "D", "F"];
       const nextType = order[(order.indexOf(row.dataset.type) + 1) % order.length];
       row.dataset.type = nextType;
-      const labels = { N: "Normal Working Set", W: "Warm-up Set (excluded from PRs)", D: "Drop Set", F: "Failure Set" };
+      const labels = { N: "Working Set", W: "Warm-up Set", D: "Drop Set", F: "Failure Set" };
       showToast("Set Type: " + labels[nextType]);
       renumberSets();
+      updateWorkoutTargetTimeUI();
       saveDraft();
     });
 
     const done = row.querySelector(".doneBox");
     done.addEventListener("click", function () {
+      lastFocusedRow = row;
+      if (editingRoutineId) {
+        showToast("Routine Builder: Adjust set count, then tap SAVE.");
+        return;
+      }
       const isChecked = done.classList.contains("checked");
       if (!isChecked) {
         const kgInput = row.querySelector(".kgInput");
         const repsInput = row.querySelector(".repsInput");
 
-        const rowIndex = Array.prototype.indexOf.call(setsDiv.children, row);
-        const prev = previous[rowIndex >= 0 ? rowIndex : 0];
-        if (kgInput && kgInput.value.trim() === "" && prev && prev.kg !== undefined) {
-          kgInput.value = showWeight(prev.kg);
+        // Auto-fill from cascaded value or previous session if blank!
+        if (kgInput && kgInput.value.trim() === "" && row.dataset.cascadekg) {
+          kgInput.value = row.dataset.cascadekg;
         }
-        if (repsInput.value.trim() === "" && prev && prev.reps) {
-          repsInput.value = prev.reps;
+        if (repsInput.value.trim() === "" && row.dataset.cascadereps) {
+          repsInput.value = row.dataset.cascadereps;
         }
 
         const weightVal = kgInput ? Number(kgInput.value) : 0;
@@ -1478,65 +2048,85 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
         if (!kgValid || !repsValid) {
           row.classList.add("shake");
           setTimeout(() => row.classList.remove("shake"), 380);
-          showToast(type === "time" ? "Enter valid hold duration in seconds (1+)." : "Enter valid weight (0+) and whole reps (1+).");
+          showToast(type === "time" ? "Enter hold duration in seconds (1+)." : "Enter weight (0+) and reps (1+).");
           return;
+        }
+
+        if (duoPartnerName) {
+          row.dataset.lifter = duoActiveLifter;
         }
 
         done.classList.add("checked");
         row.classList.add("done");
+        cascadeSetPlaceholders();
 
-        // Instant Live PR Detection on Set Completion!
+        // Hevy-Style Live Set-by-Set PR Evaluation & Gold [PR] Row Badge!
         let brokeLivePr = false;
-        if (row.dataset.type !== "W") {
+        if (row.dataset.type !== "W" && row.dataset.lifter !== "p2" && typeof evaluateSetLivePRs === "function") {
           const setKg = kgInput ? toKg(weightVal) : 0;
-          if (type === "weight" && historicalBest.maxWeight > 0) {
-            if (setKg > historicalBest.maxWeight + 0.05) {
-              brokeLivePr = true;
-              historicalBest.maxWeight = setKg;
-              triggerLivePrCelebration(ex.name, weightVal + " " + unitName().toUpperCase() + " × " + repsVal);
-            } else if (e1rm(setKg, repsVal) > historicalBest.best1rm + 0.05) {
-              brokeLivePr = true;
-              historicalBest.best1rm = e1rm(setKg, repsVal);
-              triggerLivePrCelebration(ex.name, "NEW 1RM (" + showWeight(historicalBest.best1rm) + " " + unitName().toUpperCase() + ")");
-            }
-          } else if (isNoWeight && historicalBest.maxReps > 0 && repsVal > historicalBest.maxReps) {
+          const brokenList = evaluateSetLivePRs(exId, setKg, repsVal, runningBest);
+          if (brokenList.length > 0) {
             brokeLivePr = true;
-            historicalBest.maxReps = repsVal;
-            triggerLivePrCelebration(ex.name, repsVal + (type === "time" ? " SEC HOLD" : " REPS"));
+            row.dataset.prtag = brokenList.join(" · ");
+            row.classList.add("is-pr-set");
+            triggerLivePrCelebration(ex.name, brokenList.join(" & "));
           }
         }
+
+        renumberSets();
 
         if (!brokeLivePr) {
           if (navigator.vibrate) navigator.vibrate(14);
           playBeep(700, "sine", 0.08);
         }
 
-        const nextCard = card.nextElementSibling;
-        if (card.classList.contains("isSuperset") && nextCard) {
-          showToast("⚡ Superset: Move to " + nextCard.querySelector("h3").textContent);
-          startTimer(15);
+        if (duoPartnerName) {
+          duoActiveLifter = duoActiveLifter === "p1" ? "p2" : "p1";
+          updateDuoBarUI();
+          const nextName = duoActiveLifter === "p1" ? getAthleteProfile().name : duoPartnerName.toUpperCase();
+          showToast("Set logged! Next turn: " + nextName);
         } else {
-          startTimer(getExerciseRest(exId));
+          const nextCard = card.nextElementSibling;
+          const prevCard = card.previousElementSibling;
+          if (card.classList.contains("isSuperset") && nextCard) {
+            showToast("Superset: Move immediately to " + nextCard.querySelector("h3").textContent);
+            startTimer(15);
+          } else if (prevCard && prevCard.classList.contains("isSuperset")) {
+            showToast("Superset round complete! Full rest, then return to " + prevCard.querySelector("h3").textContent);
+            startTimer(getExerciseRest(exId));
+          } else {
+            startTimer(getExerciseRest(exId));
+          }
         }
       } else {
         done.classList.remove("checked");
         row.classList.remove("done");
+        row.dataset.prtag = "";
+        row.classList.remove("is-pr-set");
+        renumberSets();
+        if (duoPartnerName) updateDuoBarUI();
       }
       saveDraft();
     });
 
-    row.querySelector(".delSetBtn").addEventListener("click", function () {
+    row.querySelector(".delSetBtn").addEventListener("click", async function () {
       const allRows = setsDiv.querySelectorAll(".setRow");
       if (allRows.length <= 1) {
-        if (confirm("Remove this last set and delete " + ex.name + " from workout?")) {
+        const ok = await appConfirm("REMOVE EXERCISE", "Remove this last set and delete " + ex.name + " from session?", "REMOVE");
+        if (ok) {
           card.remove();
           renumberCardIndices();
+          renumberSupersetBadges();
+          updateWorkoutTargetTimeUI();
+          updateDuoBarUI();
           saveDraft();
         }
         return;
       }
       row.remove();
       renumberSets();
+      updateWorkoutTargetTimeUI();
+      updateDuoBarUI();
       saveDraft();
     });
 
@@ -1548,7 +2138,8 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
 
     if (saved) {
       const kgInput = row.querySelector(".kgInput");
-      if (kgInput && saved.kg !== undefined) kgInput.value = saved.kg;
+      const rawWt = saved.displayWeight !== undefined ? saved.displayWeight : (saved.kg !== undefined ? saved.kg : "");
+      if (kgInput && rawWt !== undefined) kgInput.value = rawWt;
       if (saved.reps !== undefined) row.querySelector(".repsInput").value = saved.reps;
       if (saved.done) {
         done.classList.add("checked");
@@ -1574,7 +2165,7 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
 
   const warmupBtn = card.querySelector(".warmup-pill-btn");
   if (warmupBtn) {
-    warmupBtn.addEventListener("click", function () {
+    warmupBtn.addEventListener("click", async function () {
       let workingWt = 0;
       card.querySelectorAll(".setRow").forEach(function (r) {
         if (r.dataset.type !== "W") {
@@ -1589,14 +2180,18 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
         });
       }
       if (!workingWt) {
-        const promptWt = prompt("Enter your working set weight (" + unitName().toUpperCase() + ") to generate warm-up sets:", unitName() === "lbs" ? "135" : "60");
+        const promptWt = await appPrompt(
+          "WARM-UP GENERATOR",
+          "Enter your target working weight (" + unitName().toUpperCase() + "):",
+          unitName() === "lbs" ? "135" : "60"
+        );
         workingWt = Number(promptWt) || 0;
       }
       if (workingWt <= 0) return;
 
-      const warmups = generateWarmupSets(workingWt, unitName());
+      const warmups = generateWarmupSets(workingWt, unitName(), equip);
       if (warmups.length === 0) {
-        showToast("Working weight is light enough to start directly!");
+        showToast("Working weight is light enough to start directly.");
         return;
       }
       card.querySelectorAll(".setRow").forEach(function (r) {
@@ -1608,7 +2203,7 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
         addSet(warmups[i], true);
       }
       saveDraft();
-      showToast("Added " + warmups.length + " progressive warm-up sets [W]!");
+      showToast("Added " + warmups.length + " warm-up set(s) [W]");
     });
   }
 
@@ -1626,6 +2221,7 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
     if (prev) {
       card.parentNode.insertBefore(card, prev);
       renumberCardIndices();
+      renumberSupersetBadges();
       saveDraft();
     }
   });
@@ -1635,6 +2231,7 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
     if (next) {
       card.parentNode.insertBefore(next, card);
       renumberCardIndices();
+      renumberSupersetBadges();
       saveDraft();
     }
   });
@@ -1642,18 +2239,35 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
   card.querySelector(".superset-btn").addEventListener("click", function () {
     card.classList.toggle("isSuperset");
     this.classList.toggle("active", card.classList.contains("isSuperset"));
+    renumberSupersetBadges();
     saveDraft();
   });
 
+  // + ADD SET automatically pre-fills from the last set above it!
   card.querySelector(".addSetBtn").addEventListener("click", function () {
-    addSet();
+    const allRows = setsDiv.querySelectorAll(".setRow");
+    const lastRow = allRows[allRows.length - 1];
+    let prefill = null;
+    if (lastRow) {
+      const kgInp = lastRow.querySelector(".kgInput");
+      const repsInp = lastRow.querySelector(".repsInput");
+      const wt = kgInp ? (kgInp.value.trim() || lastRow.dataset.cascadekg || "") : "";
+      const rp = repsInp ? (repsInp.value.trim() || lastRow.dataset.cascadereps || "") : "";
+      prefill = { displayWeight: wt, reps: rp, type: "N", done: false };
+    }
+    addSet(prefill);
+    updateWorkoutTargetTimeUI();
     saveDraft();
   });
 
-  card.querySelector(".remove-ex-btn").addEventListener("click", function () {
-    if (confirm("Remove " + ex.name + " from this workout?")) {
+  card.querySelector(".remove-ex-btn").addEventListener("click", async function () {
+    const ok = await appConfirm("REMOVE EXERCISE", "Remove " + ex.name + " from this session?", "REMOVE");
+    if (ok) {
       card.remove();
       renumberCardIndices();
+      renumberSupersetBadges();
+      updateWorkoutTargetTimeUI();
+      updateDuoBarUI();
       saveDraft();
     }
   });
@@ -1669,10 +2283,12 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
   }
   if (!doNotAppend) {
     renumberCardIndices();
+    renumberSupersetBadges();
+    updateWorkoutTargetTimeUI();
   }
   return card;
 }
-// ============ app.js (PART 2/2) : FLEX STUDIO, PHOTO OVERLAY, ACHIEVEMENTS & INIT ============
+// ============ app.js (PART 2/2) : FULL RESULT REPORT, LVL 1-10 ROADMAP, 5 ACCENTS & INIT ============
 
 function renderBodyMapSvg(containerId, workloadMap, isDarkCard) {
   const container = $(containerId);
@@ -1682,7 +2298,7 @@ function renderBodyMapSvg(containerId, workloadMap, isDarkCard) {
   const isLightMode = !isDarkCard && document.documentElement.getAttribute("data-theme") === "light";
   const baseFill = isLightMode ? "#cfc8b8" : "#252522";
   const strokeColor = isLightMode ? "#121211" : "#3d3d38";
-  const flame = "#ff4422";
+  const flame = cssVar("--flame") || "#ff4422";
   const brass = "#d4b483";
 
   function colorFor(muscle) {
@@ -1700,67 +2316,99 @@ function renderBodyMapSvg(containerId, workloadMap, isDarkCard) {
 
   container.innerHTML =
     '<div class="anatomy-col">' +
-      '<div class="anatomy-label">FRONT VIEW</div>' +
-      '<svg viewBox="0 0 160 300" class="anatomy-svg">' +
-        '<circle cx="80" cy="26" r="14" fill="' + baseFill + '" stroke="' + strokeColor + '" stroke-width="1.5"/>' +
-        '<rect x="73" y="40" width="14" height="10" rx="3" fill="' + baseFill + '" stroke="' + strokeColor + '" stroke-width="1.2"/>' +
-        '<path d="M58 50 L73 45 L87 45 L102 50 L95 58 L65 58 Z" fill="' + colorFor("Shoulders") + '" stroke="' + strokeColor + '" stroke-width="1.2"/>' +
-        '<path d="M52 56 Q80 54 80 58 L80 86 Q63 90 50 78 Z" fill="' + colorFor("Chest") + '" stroke="' + strokeColor + '" stroke-width="1.5"/>' +
-        '<path d="M108 56 Q80 54 80 58 L80 86 Q97 90 110 78 Z" fill="' + colorFor("Chest") + '" stroke="' + strokeColor + '" stroke-width="1.5"/>' +
-        '<path d="M36 56 Q44 48 52 56 L50 76 Q38 74 36 64 Z" fill="' + colorFor("Shoulders") + '" stroke="' + strokeColor + '" stroke-width="1.5"/>' +
-        '<path d="M124 56 Q116 48 108 56 L110 76 Q122 74 124 64 Z" fill="' + colorFor("Shoulders") + '" stroke="' + strokeColor + '" stroke-width="1.5"/>' +
-        '<rect x="31" y="76" width="14" height="34" rx="7" transform="rotate(6 38 93)" fill="' + colorFor("Biceps") + '" stroke="' + strokeColor + '" stroke-width="1.3"/>' +
-        '<rect x="115" y="76" width="14" height="34" rx="7" transform="rotate(-6 122 93)" fill="' + colorFor("Biceps") + '" stroke="' + strokeColor + '" stroke-width="1.3"/>' +
-        '<rect x="25" y="112" width="12" height="36" rx="6" transform="rotate(8 31 130)" fill="' + colorFor("Forearms") + '" stroke="' + strokeColor + '" stroke-width="1.2"/>' +
-        '<rect x="123" y="112" width="12" height="36" rx="6" transform="rotate(-8 129 130)" fill="' + colorFor("Forearms") + '" stroke="' + strokeColor + '" stroke-width="1.2"/>' +
-        '<rect x="64" y="88" width="14" height="14" rx="3" fill="' + colorFor("Core") + '" stroke="' + strokeColor + '" stroke-width="1.2"/>' +
-        '<rect x="82" y="88" width="14" height="14" rx="3" fill="' + colorFor("Core") + '" stroke="' + strokeColor + '" stroke-width="1.2"/>' +
-        '<rect x="64" y="104" width="14" height="14" rx="3" fill="' + colorFor("Core") + '" stroke="' + strokeColor + '" stroke-width="1.2"/>' +
-        '<rect x="82" y="104" width="14" height="14" rx="3" fill="' + colorFor("Core") + '" stroke="' + strokeColor + '" stroke-width="1.2"/>' +
-        '<path d="M53 140 L77 140 L74 210 Q60 214 52 200 Z" fill="' + colorFor("Quads") + '" stroke="' + strokeColor + '" stroke-width="1.4"/>' +
-        '<path d="M107 140 L83 140 L86 210 Q100 214 108 200 Z" fill="' + colorFor("Quads") + '" stroke="' + strokeColor + '" stroke-width="1.4"/>' +
-        '<path d="M54 218 L72 218 L69 276 L57 276 Z" fill="' + colorFor("Calves") + '" stroke="' + strokeColor + '" stroke-width="1.2"/>' +
-        '<path d="M106 218 L88 218 L91 276 L103 276 Z" fill="' + colorFor("Calves") + '" stroke="' + strokeColor + '" stroke-width="1.2"/>' +
+      '<div class="anatomy-label">ANTERIOR // FRONT</div>' +
+      '<svg viewBox="0 0 180 320" class="anatomy-svg">' +
+        '<path d="M78 16 C78 8 102 8 102 16 L100 32 C100 38 80 38 80 32 Z" fill="' + baseFill + '" stroke="' + strokeColor + '" stroke-width="1.4"/>' +
+        '<path d="M82 37 L98 37 L101 48 L79 48 Z" fill="' + baseFill + '" stroke="' + strokeColor + '" stroke-width="1.2"/>' +
+        '<path d="M56 56 Q74 44 82 47 L98 47 Q106 44 124 56 L112 62 L68 62 Z" fill="' + colorFor("Back") + '" stroke="' + strokeColor + '" stroke-width="1.2"/>' +
+        '<path d="M54 60 Q72 56 89 62 L89 92 Q70 96 54 82 Q50 70 54 60 Z" fill="' + colorFor("Chest") + '" stroke="' + strokeColor + '" stroke-width="1.4"/>' +
+        '<path d="M126 60 Q108 56 91 62 L91 92 Q110 96 126 82 Q130 70 126 60 Z" fill="' + colorFor("Chest") + '" stroke="' + strokeColor + '" stroke-width="1.4"/>' +
+        '<path d="M54 57 Q38 56 36 72 Q36 84 48 84 L54 74 Z" fill="' + colorFor("Shoulders") + '" stroke="' + strokeColor + '" stroke-width="1.4"/>' +
+        '<path d="M126 57 Q142 56 144 72 Q144 84 132 84 L126 74 Z" fill="' + colorFor("Shoulders") + '" stroke="' + strokeColor + '" stroke-width="1.4"/>' +
+        '<path d="M37 85 Q30 100 35 118 L47 118 Q51 100 48 85 Z" fill="' + colorFor("Biceps") + '" stroke="' + strokeColor + '" stroke-width="1.3"/>' +
+        '<path d="M143 85 Q150 100 145 118 L133 118 Q129 100 132 85 Z" fill="' + colorFor("Biceps") + '" stroke="' + strokeColor + '" stroke-width="1.3"/>' +
+        '<path d="M34 120 Q24 138 25 160 L34 162 Q43 142 46 120 Z" fill="' + colorFor("Forearms") + '" stroke="' + strokeColor + '" stroke-width="1.2"/>' +
+        '<path d="M146 120 Q156 138 155 160 L146 162 Q137 142 134 120 Z" fill="' + colorFor("Forearms") + '" stroke="' + strokeColor + '" stroke-width="1.2"/>' +
+        '<path d="M62 92 L72 95 L72 138 L60 134 Z" fill="' + colorFor("Core") + '" stroke="' + strokeColor + '" stroke-width="1.1"/>' +
+        '<path d="M118 92 L108 95 L108 138 L120 134 Z" fill="' + colorFor("Core") + '" stroke="' + strokeColor + '" stroke-width="1.1"/>' +
+        '<path d="M74 96 L88 96 L88 112 L74 112 Z" fill="' + colorFor("Core") + '" stroke="' + strokeColor + '" stroke-width="1.1"/>' +
+        '<path d="M92 96 L106 96 L106 112 L92 112 Z" fill="' + colorFor("Core") + '" stroke="' + strokeColor + '" stroke-width="1.1"/>' +
+        '<path d="M74 115 L88 115 L88 138 L76 138 Z" fill="' + colorFor("Core") + '" stroke="' + strokeColor + '" stroke-width="1.1"/>' +
+        '<path d="M92 115 L106 115 L104 138 L92 138 Z" fill="' + colorFor("Core") + '" stroke="' + strokeColor + '" stroke-width="1.1"/>' +
+        '<path d="M58 144 L86 148 L82 222 Q64 226 55 208 Q50 176 58 144 Z" fill="' + colorFor("Quads") + '" stroke="' + strokeColor + '" stroke-width="1.4"/>' +
+        '<path d="M122 144 L94 148 L98 222 Q116 226 125 208 Q130 176 122 144 Z" fill="' + colorFor("Quads") + '" stroke="' + strokeColor + '" stroke-width="1.4"/>' +
+        '<path d="M60 230 Q54 256 61 294 L73 294 Q80 258 77 230 Z" fill="' + colorFor("Calves") + '" stroke="' + strokeColor + '" stroke-width="1.2"/>' +
+        '<path d="M120 230 Q126 256 119 294 L107 294 Q100 258 103 230 Z" fill="' + colorFor("Calves") + '" stroke="' + strokeColor + '" stroke-width="1.2"/>' +
       '</svg>' +
     '</div>' +
     '<div class="anatomy-col">' +
-      '<div class="anatomy-label">BACK VIEW</div>' +
-      '<svg viewBox="0 0 160 300" class="anatomy-svg">' +
-        '<circle cx="80" cy="26" r="14" fill="' + baseFill + '" stroke="' + strokeColor + '" stroke-width="1.5"/>' +
-        '<rect x="73" y="40" width="14" height="10" rx="3" fill="' + baseFill + '" stroke="' + strokeColor + '" stroke-width="1.2"/>' +
-        '<polygon points="56,50 80,44 104,50 92,82 80,90 68,82" fill="' + colorFor("Back") + '" stroke="' + strokeColor + '" stroke-width="1.3"/>' +
-        '<path d="M52 74 L68 82 L76 124 L56 116 Z" fill="' + colorFor("Back") + '" stroke="' + strokeColor + '" stroke-width="1.5"/>' +
-        '<path d="M108 74 L92 82 L84 124 L104 116 Z" fill="' + colorFor("Back") + '" stroke="' + strokeColor + '" stroke-width="1.5"/>' +
-        '<rect x="31" y="76" width="14" height="34" rx="7" transform="rotate(6 38 93)" fill="' + colorFor("Triceps") + '" stroke="' + strokeColor + '" stroke-width="1.5"/>' +
-        '<rect x="115" y="76" width="14" height="34" rx="7" transform="rotate(-6 122 93)" fill="' + colorFor("Triceps") + '" stroke="' + strokeColor + '" stroke-width="1.5"/>' +
-        '<path d="M54 138 L80 138 L80 168 Q56 170 52 154 Z" fill="' + colorFor("Glutes") + '" stroke="' + strokeColor + '" stroke-width="1.2"/>' +
-        '<path d="M106 138 L80 138 L80 168 Q104 170 108 154 Z" fill="' + colorFor("Glutes") + '" stroke="' + strokeColor + '" stroke-width="1.2"/>' +
-        '<path d="M54 170 L76 170 L73 214 L55 210 Z" fill="' + colorFor("Hamstrings") + '" stroke="' + strokeColor + '" stroke-width="1.2"/>' +
-        '<path d="M106 170 L84 170 L87 214 L105 210 Z" fill="' + colorFor("Hamstrings") + '" stroke="' + strokeColor + '" stroke-width="1.2"/>' +
-        '<path d="M54 218 L72 218 L69 276 L57 276 Z" fill="' + colorFor("Calves") + '" stroke="' + strokeColor + '" stroke-width="1.2"/>' +
-        '<path d="M106 218 L88 218 L91 276 L103 276 Z" fill="' + colorFor("Calves") + '" stroke="' + strokeColor + '" stroke-width="1.2"/>' +
+      '<div class="anatomy-label">POSTERIOR // BACK</div>' +
+      '<svg viewBox="0 0 180 320" class="anatomy-svg">' +
+        '<path d="M78 16 C78 8 102 8 102 16 L100 32 C100 38 80 38 80 32 Z" fill="' + baseFill + '" stroke="' + strokeColor + '" stroke-width="1.4"/>' +
+        '<path d="M82 37 L98 37 L101 48 L79 48 Z" fill="' + baseFill + '" stroke="' + strokeColor + '" stroke-width="1.2"/>' +
+        '<path d="M60 54 L90 46 L120 54 L104 94 L90 104 L76 94 Z" fill="' + colorFor("Back") + '" stroke="' + strokeColor + '" stroke-width="1.3"/>' +
+        '<path d="M56 56 Q38 56 36 72 Q36 84 48 84 L58 74 Z" fill="' + colorFor("Shoulders") + '" stroke="' + strokeColor + '" stroke-width="1.4"/>' +
+        '<path d="M124 56 Q142 56 144 72 Q144 84 132 84 L122 74 Z" fill="' + colorFor("Shoulders") + '" stroke="' + strokeColor + '" stroke-width="1.4"/>' +
+        '<path d="M56 76 L76 94 L86 138 L62 128 Q50 102 56 76 Z" fill="' + colorFor("Back") + '" stroke="' + strokeColor + '" stroke-width="1.4"/>' +
+        '<path d="M124 76 L104 94 L94 138 L118 128 Q130 102 124 76 Z" fill="' + colorFor("Back") + '" stroke="' + strokeColor + '" stroke-width="1.4"/>' +
+        '<path d="M37 85 Q30 100 35 118 L47 118 Q51 100 48 85 Z" fill="' + colorFor("Triceps") + '" stroke="' + strokeColor + '" stroke-width="1.3"/>' +
+        '<path d="M143 85 Q150 100 145 118 L133 118 Q129 100 132 85 Z" fill="' + colorFor("Triceps") + '" stroke="' + strokeColor + '" stroke-width="1.3"/>' +
+        '<path d="M34 120 Q24 138 25 160 L34 162 Q43 142 46 120 Z" fill="' + colorFor("Forearms") + '" stroke="' + strokeColor + '" stroke-width="1.2"/>' +
+        '<path d="M146 120 Q156 138 155 160 L146 162 Q137 142 134 120 Z" fill="' + colorFor("Forearms") + '" stroke="' + strokeColor + '" stroke-width="1.2"/>' +
+        '<path d="M58 142 L89 144 L89 178 Q62 182 55 162 Z" fill="' + colorFor("Glutes") + '" stroke="' + strokeColor + '" stroke-width="1.3"/>' +
+        '<path d="M122 142 L91 144 L91 178 Q118 182 125 162 Z" fill="' + colorFor("Glutes") + '" stroke="' + strokeColor + '" stroke-width="1.3"/>' +
+        '<path d="M57 178 L86 182 L82 224 L59 220 Q53 200 57 178 Z" fill="' + colorFor("Hamstrings") + '" stroke="' + strokeColor + '" stroke-width="1.3"/>' +
+        '<path d="M123 178 L94 182 L98 224 L121 220 Q127 200 123 178 Z" fill="' + colorFor("Hamstrings") + '" stroke="' + strokeColor + '" stroke-width="1.3"/>' +
+        '<path d="M60 230 Q52 252 62 294 L73 294 Q82 254 77 230 Z" fill="' + colorFor("Calves") + '" stroke="' + strokeColor + '" stroke-width="1.2"/>' +
+        '<path d="M120 230 Q128 252 118 294 L107 294 Q98 254 103 230 Z" fill="' + colorFor("Calves") + '" stroke="' + strokeColor + '" stroke-width="1.2"/>' +
       '</svg>' +
     '</div>';
 }
 
 // =====================================================
-//  STRAVA × HEVY 3-MODE FLEX STUDIO & STORY EXPORTER
+//  BRAND-NEW MOTIVATION & PROGRESS RESULT REPORT
 // =====================================================
 function buildSummaryFromWorkout(w) {
   const workloadMap = calculateMuscleWorkload([w]);
   const insights = typeof getWorkoutFlexInsights === "function"
     ? getWorkoutFlexInsights(w)
-    : { deltaText: "SESSION COMPLETE", deltaPositive: true, mvp: null };
+    : { deltaText: "SESSION COMPLETE", deltaPositive: true, mvp: null, xpEarned: 150 };
+  const duoStats = typeof getWorkoutDuoStats === "function" ? getWorkoutDuoStats(w) : null;
 
   let totalSets = 0;
   const exerciseLines = [];
+  const detailedExercises = [];
+
+  const estMinTarget = typeof estimateWorkoutMinutes === "function"
+    ? estimateWorkoutMinutes((w.exercises || []).map(e => ({
+        exId: e.exId,
+        sets: (e.sets || []).filter(s => s.type !== "W" && s.lifter !== "p2").length
+      })))
+    : 45;
 
   (w.exercises || []).forEach(function (ex) {
-    const working = (ex.sets || []).filter(s => s.type !== "W");
+    const working = (ex.sets || []).filter(s => s.type !== "W" && s.lifter !== "p2");
     totalSets += working.length;
-    exerciseLines.push({
+    if (working.length > 0) {
+      exerciseLines.push({
+        name: exName(ex.exId),
+        setsCount: working.length
+      });
+    }
+
+    const comp = typeof getExerciseComparisonVsLast === "function"
+      ? getExerciseComparisonVsLast(ex.exId, ex.sets, w.id)
+      : { badgeText: "COMPLETED", isPositive: true };
+
+    const exPrs = (w.prs || []).filter(p => p.exId === ex.exId);
+    detailedExercises.push({
+      exId: ex.exId,
       name: exName(ex.exId),
-      setsCount: working.length
+      isSuperset: !!ex.isSuperset,
+      sets: ex.sets || [],
+      comparisonBadge: comp.badgeText,
+      isPositive: comp.isPositive,
+      prs: exPrs
     });
   });
 
@@ -1776,31 +2424,22 @@ function buildSummaryFromWorkout(w) {
   });
 
   return {
+    id: w.id,
     title: w.title || "Strength Session",
     date: dateStr,
     durationMin: durationMin,
+    estMinTarget: estMinTarget,
     volume: workoutVolume(w),
     totalSets: totalSets,
     muscleMap: workloadMap,
     exerciseLines: exerciseLines,
+    detailedExercises: detailedExercises,
     prs: prs,
     deltaText: insights.deltaText,
-    mvp: insights.mvp
+    mvp: insights.mvp,
+    xpEarned: insights.xpEarned || 150,
+    duoStats: duoStats
   };
-}
-
-function switchFlexMode(mode) {
-  activeFlexMode = mode || "carbon";
-  if ($("flexModeSeg")) setSegmented($("flexModeSeg"), activeFlexMode);
-  if ($("flexCardCarbon")) $("flexCardCarbon").classList.toggle("hidden", activeFlexMode !== "carbon");
-  if ($("flexCardMvp")) $("flexCardMvp").classList.toggle("hidden", activeFlexMode !== "mvp");
-  if ($("flexCardPhoto")) $("flexCardPhoto").classList.toggle("hidden", activeFlexMode !== "photo");
-}
-
-if ($("flexModeSeg")) {
-  bindSegmented($("flexModeSeg"), function (v) {
-    switchFlexMode(v);
-  });
 }
 
 if ($("flexPhotoInput")) {
@@ -1810,9 +2449,8 @@ if ($("flexPhotoInput")) {
     const reader = new FileReader();
     reader.onload = function () {
       uploadedFlexPhotoDataUrl = reader.result;
-      const bg = $("photoOverlayBg");
-      if (bg) bg.style.backgroundImage = 'url("' + uploadedFlexPhotoDataUrl + '")';
-      showToast("Gym photo applied to Flex Card 📷");
+      if ($("photoAttachedHint")) $("photoAttachedHint").classList.remove("hidden");
+      showToast("Gym photo attached! Tap EXPORT IMAGE (.PNG).");
     };
     reader.readAsDataURL(file);
   });
@@ -1821,24 +2459,149 @@ if ($("flexPhotoInput")) {
 function showSummaryModal(summaryData, fromHistory) {
   isSummaryFromHistory = !!fromHistory;
   activeSummaryData = summaryData;
+  uploadedFlexPhotoDataUrl = null;
+  if ($("photoAttachedHint")) $("photoAttachedHint").classList.add("hidden");
+
   const unit = unitName().toUpperCase();
-  const prof = typeof getAthleteProfile === "function" ? getAthleteProfile() : { name: "ATHLETE", level: 1 };
+  const prof = typeof getAthleteProfile === "function" ? getAthleteProfile() : { name: "ATHLETE", level: 1, rank: "ROOKIE", xp: 100, nextLevelXp: 250, progressPct: 40, xpToNext: 150, nextRank: "IRON STARTER" };
   const volText = showWeight(summaryData.volume).toLocaleString() + " " + unit;
 
-  // 1. Populate Carbon Flex Card
-  if ($("flexAthleteBadge")) $("flexAthleteBadge").textContent = prof.name + " · LVL " + prof.level;
+  if ($("sumTopBannerTag")) {
+    $("sumTopBannerTag").textContent = fromHistory
+      ? ("WORKOUT LOG REPORT // " + prof.name)
+      : ("WORKOUT COMPLETE // GREAT WORK, " + prof.name + "!");
+  }
   $("sumTitle").textContent = summaryData.title;
-  $("sumDate").textContent = summaryData.date.toUpperCase() + " · " + summaryData.durationMin + " MIN";
-  if ($("flexGiantVolume")) $("flexGiantVolume").textContent = volText;
-  if ($("flexDeltaPill")) $("flexDeltaPill").textContent = summaryData.deltaText || "SESSION VERIFIED";
+  $("sumDate").textContent = summaryData.date.toUpperCase() + "  ·  DURATION: " + summaryData.durationMin + " MIN (TARGET: ~" + (summaryData.estMinTarget || 45) + "M)";
 
+  // 1. Level & XP Card
+  if ($("sumLevelBadge")) $("sumLevelBadge").textContent = "LVL " + prof.level + " // " + prof.rank;
+  if ($("sumXpEarned")) $("sumXpEarned").textContent = "+" + (summaryData.xpEarned || 150) + " XP EARNED";
+  if ($("sumXpBarFill")) $("sumXpBarFill").style.width = prof.progressPct + "%";
+  if ($("sumXpSub")) {
+    $("sumXpSub").textContent = prof.xpToNext > 0
+      ? ("Total: " + prof.xp + " XP  ·  " + prof.xpToNext + " XP needed for LVL " + (prof.level + 1) + " (" + prof.nextRank + ")")
+      : ("Total: " + prof.xp + " XP  ·  MAX LEVEL REACHED");
+  }
+
+  // 2. 4 Key Comparison Tiles
   $("sumTiles").innerHTML =
-    '<div class="ticket-metric-cell"><small>Duration</small><strong>' + esc(summaryData.durationMin + " MIN") + '</strong></div>' +
+    '<div class="ticket-metric-cell"><small>Total Volume</small><strong>' + esc(volText) + '</strong></div>' +
     '<div class="ticket-metric-cell"><small>Working Sets</small><strong>' + esc(summaryData.totalSets) + '</strong></div>' +
-    '<div class="ticket-metric-cell"><small>PRs Broken</small><strong>' + esc(summaryData.prs.length) + '</strong></div>';
+    '<div class="ticket-metric-cell"><small>Duration vs Target</small><strong>' + esc(summaryData.durationMin + "m / ~" + (summaryData.estMinTarget || 45) + "m") + '</strong></div>' +
+    '<div class="ticket-metric-cell"><small>Records Broken</small><strong style="color:var(--flame);">' + esc(summaryData.prs.length + " PRs") + '</strong></div>';
 
+  if ($("sumDeltaBanner")) {
+    $("sumDeltaBanner").textContent = summaryData.deltaText || "SESSION VERIFIED";
+  }
+
+  // 3. PRs Broken Today
+  const prSection = $("sumPrSection");
+  const prList = $("sumPrs");
+  prList.innerHTML = "";
+  if (summaryData.prs.length > 0) {
+    prSection.classList.remove("hidden");
+    if ($("sumPrCountBadge")) $("sumPrCountBadge").textContent = summaryData.prs.length + " RECORD(S)";
+    summaryData.prs.forEach(function (pr) {
+      const item = document.createElement("div");
+      item.className = "pr-ticket-row";
+      const leftSpan = document.createElement("span");
+      leftSpan.textContent = pr.name + " · " + pr.kind;
+      const rightB = document.createElement("b");
+      rightB.textContent = pr.text;
+      item.appendChild(leftSpan);
+      item.appendChild(rightB);
+      prList.appendChild(item);
+    });
+  } else {
+    prSection.classList.add("hidden");
+  }
+
+  // 4. Exercise-by-Exercise Progress & Set Breakdown
+  const exContainer = $("sumExerciseBreakdown");
+  if (exContainer) {
+    exContainer.innerHTML = "";
+    (summaryData.detailedExercises || []).forEach(function (ex, idx) {
+      const box = document.createElement("div");
+      box.className = "result-ex-item";
+      const type = exTypeOf(ex.exId);
+
+      const topRow = document.createElement("div");
+      topRow.className = "result-ex-top";
+      const titleB = document.createElement("b");
+      titleB.textContent = pad(idx + 1) + ". " + ex.name + (ex.isSuperset ? " [SS]" : "");
+      topRow.appendChild(titleB);
+      box.appendChild(topRow);
+
+      const deltaBadge = document.createElement("div");
+      deltaBadge.className = "result-ex-delta";
+      deltaBadge.textContent = ex.comparisonBadge;
+      box.appendChild(deltaBadge);
+
+      const setsWrap = document.createElement("div");
+      setsWrap.className = "result-sets-wrap";
+      let workIdx = 0;
+
+      (ex.sets || []).forEach(function (s) {
+        const line = document.createElement("div");
+        line.className = "result-set-line";
+        let setLabel = "";
+        if (s.lifter === "p2") setLabel = "PARTNER";
+        else if (s.type === "W") setLabel = "WARMUP [W]";
+        else {
+          workIdx++;
+          setLabel = "SET " + workIdx + (s.type && s.type !== "N" ? (" [" + s.type + "]") : "");
+        }
+
+        let valText = "";
+        const rpeSuffix = s.rpe ? (" @" + s.rpe) : "";
+        if (type === "time") valText = s.reps + " SEC" + rpeSuffix;
+        else if (type === "reps") valText = s.reps + " REPS" + rpeSuffix;
+        else valText = showWeight(s.kg) + " " + unit + " x " + s.reps + rpeSuffix;
+
+        const leftS = document.createElement("span");
+        leftS.style.color = "var(--muted)";
+        leftS.textContent = setLabel;
+        const rightS = document.createElement("b");
+        rightS.textContent = valText;
+
+        line.appendChild(leftS);
+        line.appendChild(rightS);
+        setsWrap.appendChild(line);
+      });
+
+      if (ex.prs && ex.prs.length > 0) {
+        const prLine = document.createElement("div");
+        prLine.style.cssText = "font-family:var(--font-mono); font-size:11px; font-weight:800; color:var(--flame); margin-top:4px;";
+        prLine.textContent = "RECORDS: " + ex.prs.map(p => p.kind + " (" + formatPRValue(p) + ")").join(" · ");
+        setsWrap.appendChild(prLine);
+      }
+
+      box.appendChild(setsWrap);
+      exContainer.appendChild(box);
+    });
+  }
+
+  // 5. Duo Head-to-Head Section
+  const duoSec = $("sumDuoSection");
+  const ds = summaryData.duoStats;
+  if (duoSec) {
+    duoSec.classList.toggle("hidden", !ds);
+    if (ds) {
+      if ($("duoWinnerBanner")) $("duoWinnerBanner").textContent = ds.winner;
+      if ($("duoP1Name")) $("duoP1Name").textContent = ds.p1Name;
+      if ($("duoP1Vol")) $("duoP1Vol").textContent = Math.round(showWeight(ds.p1Vol)).toLocaleString() + " " + unit;
+      if ($("duoP1Sets")) $("duoP1Sets").textContent = ds.p1Sets + " WORKING SETS";
+      if ($("duoP1Top")) $("duoP1Top").textContent = "BEST: " + ds.p1TopLift;
+      if ($("duoP2Name")) $("duoP2Name").textContent = ds.p2Name;
+      if ($("duoP2Vol")) $("duoP2Vol").textContent = Math.round(showWeight(ds.p2Vol)).toLocaleString() + " " + unit;
+      if ($("duoP2Sets")) $("duoP2Sets").textContent = ds.p2Sets + " WORKING SETS";
+      if ($("duoP2Top")) $("duoP2Top").textContent = "BEST: " + ds.p2TopLift;
+    }
+  }
+
+  // 6. Muscle Split & Anatomy
   renderBodyMapSvg("sumBodyMap", summaryData.muscleMap, true);
-
   const mList = $("sumMuscles");
   mList.innerHTML = "";
   const muscles = Object.keys(summaryData.muscleMap).sort((a, b) => {
@@ -1854,52 +2617,10 @@ function showSummaryModal(summaryData, fromHistory) {
     mList.appendChild(badge);
   });
 
-  const prSection = $("sumPrSection");
-  const prList = $("sumPrs");
-  prList.innerHTML = "";
-  if (summaryData.prs.length > 0) {
-    prSection.classList.remove("hidden");
-    summaryData.prs.forEach(function (pr) {
-      const item = document.createElement("div");
-      item.className = "pr-ticket-row";
-      const leftSpan = document.createElement("span");
-      leftSpan.textContent = "🏆 " + pr.name + " · " + pr.kind;
-      const rightB = document.createElement("b");
-      rightB.textContent = pr.text;
-      item.appendChild(leftSpan);
-      item.appendChild(rightB);
-      prList.appendChild(item);
-    });
-  } else {
-    prSection.classList.add("hidden");
-  }
-
-  // 2. Populate MVP Best Lift Card
-  const mvp = summaryData.mvp;
-  if ($("flexMvpDate")) $("flexMvpDate").textContent = summaryData.date.toUpperCase();
-  if (mvp) {
-    if ($("mvpExName")) $("mvpExName").textContent = mvp.name;
-    if ($("mvpExMeta")) $("mvpExMeta").textContent = (mvp.muscle + " · " + mvp.equipment + " · " + mvp.setsCount + " SETS").toUpperCase();
-    if ($("mvpTopSet")) $("mvpTopSet").textContent = mvp.topSetText;
-    if ($("mvpEst1rm")) $("mvpEst1rm").textContent = mvp.est1rmText;
-    if ($("mvpExVol")) $("mvpExVol").textContent = mvp.volumeText;
-  }
-
-  // 3. Populate Strava Photo Flex Card
-  if ($("photoFlexTitle")) $("photoFlexTitle").textContent = summaryData.title;
-  if ($("photoFlexVol")) $("photoFlexVol").textContent = volText;
-  if ($("photoFlexSets")) $("photoFlexSets").textContent = summaryData.totalSets;
-  if ($("photoFlexDur")) $("photoFlexDur").textContent = summaryData.durationMin + " MIN";
-  if ($("photoFlexMvp")) {
-    $("photoFlexMvp").textContent = mvp
-      ? ("👑 MVP LIFT: " + mvp.name.toUpperCase() + " (" + mvp.topSetText + ")")
-      : summaryData.deltaText;
-  }
-
-  switchFlexMode("carbon");
   $("sumDoneBtn").querySelector("span").textContent = isSummaryFromHistory ? "RETURN TO HISTORY" : "DONE";
   $("summaryBackdrop").classList.remove("hidden");
   $("summaryModal").classList.remove("hidden");
+  $("summaryModal").scrollTop = 0;
 }
 
 function closeSummaryModal() {
@@ -1910,26 +2631,27 @@ function closeSummaryModal() {
   }
 }
 
-// High-Res 1080x1920 Strava × Hevy Flex Card Canvas Exporter
+// High-Res 1080x1920 PNG Summary Card Exporter (Uses local drawRoundedBox!)
 function generateAndShareStoryPoster(sData) {
   if (!sData) return;
   const canvas = document.createElement("canvas");
   canvas.width = 1080;
   canvas.height = 1920;
   const ctx = canvas.getContext("2d");
-  const prof = typeof getAthleteProfile === "function" ? getAthleteProfile() : { name: "ATHLETE", level: 1 };
+  const prof = typeof getAthleteProfile === "function" ? getAthleteProfile() : { name: "ATHLETE", level: 1, rank: "ROOKIE" };
   const unit = unitName().toUpperCase();
   const volText = showWeight(sData.volume).toLocaleString() + " " + unit;
+  const accentColor = cssVar("--flame") || "#ff4422";
 
   function finalizeExport() {
     canvas.toBlob(function (blob) {
       if (!blob) return;
-      const fileName = "strvex-flex-" + todayKey() + ".png";
+      const fileName = "strvex-summary-" + todayKey() + ".png";
       const file = new File([blob], fileName, { type: "image/png" });
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
         navigator.share({
-          title: "STRVEX Workout Flex",
-          text: sData.title + " logged on STRVEX!",
+          title: "STRVEX Workout Report",
+          text: sData.title + " logged on STRVEX",
           files: [file]
         }).catch(function () {});
       } else {
@@ -1937,13 +2659,12 @@ function generateAndShareStoryPoster(sData) {
         link.href = URL.createObjectURL(blob);
         link.download = fileName;
         link.click();
-        showToast("Flex Card (.PNG) downloaded ✓");
+        showToast("Summary Image (.PNG) downloaded");
       }
     }, "image/png");
   }
 
-  // If Photo Flex Mode with uploaded photo, draw user photo + Strava watermark overlay
-  if (activeFlexMode === "photo" && uploadedFlexPhotoDataUrl) {
+  if (uploadedFlexPhotoDataUrl) {
     const img = new Image();
     img.onload = function () {
       ctx.fillStyle = "#0a0a0a";
@@ -1965,7 +2686,7 @@ function generateAndShareStoryPoster(sData) {
       ctx.textAlign = "left";
       ctx.fillText("STRVEX", 80, 130);
 
-      ctx.fillStyle = "#ff4422";
+      ctx.fillStyle = accentColor;
       ctx.font = "800 30px 'JetBrains Mono', monospace";
       ctx.textAlign = "right";
       ctx.fillText(prof.name + " // LVL " + prof.level, 1000, 130);
@@ -1989,7 +2710,7 @@ function generateAndShareStoryPoster(sData) {
       const stats = [
         { l: "TOTAL VOLUME", v: volText },
         { l: "WORKING SETS", v: String(sData.totalSets) },
-        { l: "DURATION", v: sData.durationMin + " MIN" }
+        { l: "RECORDS SET", v: sData.prs.length + " PRs" }
       ];
       stats.forEach(function (st, idx) {
         const sx = 80 + idx * 320;
@@ -2002,9 +2723,9 @@ function generateAndShareStoryPoster(sData) {
       });
 
       if (sData.mvp) {
-        ctx.fillStyle = "#ff4422";
+        ctx.fillStyle = accentColor;
         ctx.font = "800 32px 'JetBrains Mono', monospace";
-        ctx.fillText("👑 MVP LIFT: " + sData.mvp.name.toUpperCase() + " — " + sData.mvp.topSetText, 80, 1710);
+        ctx.fillText("TOP LIFT: " + sData.mvp.name.toUpperCase() + " — " + sData.mvp.topSetText, 80, 1710);
       }
 
       ctx.fillStyle = "rgba(255,255,255,0.6)";
@@ -2017,50 +2738,39 @@ function generateAndShareStoryPoster(sData) {
     return;
   }
 
-  // Dark Carbon Luxury Radial Glow Background (Hevy × Strava Style)
   ctx.fillStyle = "#0d0d0c";
   ctx.fillRect(0, 0, 1080, 1920);
 
-  const glow = ctx.createRadialGradient(850, 280, 40, 850, 280, 900);
-  glow.addColorStop(0, "rgba(255, 68, 34, 0.32)");
-  glow.addColorStop(0.5, "rgba(212, 180, 131, 0.08)");
-  glow.addColorStop(1, "rgba(13, 13, 12, 0)");
-  ctx.fillStyle = glow;
-  ctx.fillRect(0, 0, 1080, 1920);
-
-  // Outer Carbon Frame
-  ctx.fillStyle = "rgba(28, 28, 26, 0.88)";
+  ctx.fillStyle = "rgba(28, 28, 26, 0.92)";
   ctx.strokeStyle = "rgba(255, 255, 255, 0.16)";
   ctx.lineWidth = 3;
-  roundRect(ctx, 64, 100, 952, 1720, 40);
+  drawRoundedBox(ctx, 64, 100, 952, 1720, 40);
   ctx.fill();
   ctx.stroke();
 
-  // Top Brand & Athlete Tag
   ctx.fillStyle = "#ebe6dc";
   ctx.font = "900 38px 'Archivo', sans-serif";
   ctx.textAlign = "left";
-  ctx.fillText("STRVEX // FLEX CARD", 124, 190);
+  ctx.fillText("STRVEX // WORKOUT REPORT", 124, 190);
 
-  ctx.fillStyle = "#ff4422";
+  ctx.fillStyle = accentColor;
   ctx.font = "800 28px 'JetBrains Mono', monospace";
   ctx.textAlign = "right";
-  ctx.fillText(prof.name + " · LVL " + prof.level, 956, 190);
+  ctx.fillText(prof.name + " · LVL " + prof.level + " (" + prof.rank + ")", 956, 190);
 
   ctx.textAlign = "left";
   ctx.fillStyle = "#9a968c";
   ctx.font = "700 26px 'JetBrains Mono', monospace";
-  ctx.fillText(sData.date.toUpperCase() + "  ·  " + sData.durationMin + " MIN", 124, 265);
+  ctx.fillText(sData.date.toUpperCase() + "  ·  " + sData.durationMin + " MIN  ·  +" + (sData.xpEarned || 150) + " XP", 124, 265);
 
   ctx.fillStyle = "#ffffff";
   ctx.font = "900 68px 'Archivo', sans-serif";
   ctx.fillText((sData.title || "STRENGTH SESSION").toUpperCase().slice(0, 22), 124, 350);
 
-  // Giant Volume Hero Box
   ctx.fillStyle = "rgba(0,0,0,0.55)";
-  roundRect(ctx, 124, 400, 832, 270, 28);
+  drawRoundedBox(ctx, 124, 400, 832, 270, 28);
   ctx.fill();
-  ctx.fillStyle = "#ff4422";
+  ctx.fillStyle = accentColor;
   ctx.fillRect(124, 400, 12, 270);
 
   ctx.fillStyle = "#d4b483";
@@ -2075,60 +2785,58 @@ function generateAndShareStoryPoster(sData) {
   ctx.font = "800 26px 'JetBrains Mono', monospace";
   ctx.fillText(sData.deltaText || "VERIFIED SESSION", 170, 632);
 
-  // MVP Best Lift Spotlight Box
   if (sData.mvp) {
     ctx.fillStyle = "rgba(255, 255, 255, 0.04)";
-    roundRect(ctx, 124, 710, 832, 240, 24);
+    drawRoundedBox(ctx, 124, 710, 832, 240, 24);
     ctx.fill();
 
     ctx.fillStyle = "#d4b483";
     ctx.font = "800 24px 'JetBrains Mono', monospace";
-    ctx.fillText("👑 SESSION MVP LIFT // EST. 1RM: " + sData.mvp.est1rmText, 164, 768);
+    ctx.fillText("PEAK LIFT // EST. 1RM: " + sData.mvp.est1rmText, 164, 768);
 
     ctx.fillStyle = "#ffffff";
     ctx.font = "900 46px 'Archivo', sans-serif";
     ctx.fillText(sData.mvp.name.slice(0, 26), 164, 835);
 
-    ctx.fillStyle = "#ff4422";
+    ctx.fillStyle = accentColor;
     ctx.font = "900 44px 'JetBrains Mono', monospace";
     ctx.fillText("TOP SET: " + sData.mvp.topSetText, 164, 905);
   }
 
-  // Exercises & PRs Summary
   let curY = 1020;
   ctx.fillStyle = "#d4b483";
   ctx.font = "800 24px 'JetBrains Mono', monospace";
-  ctx.fillText("WORKOUT LINEUP (" + sData.totalSets + " WORKING SETS)", 124, curY);
+  ctx.fillText("EXERCISES & PROGRESS (" + sData.totalSets + " WORKING SETS)", 124, curY);
 
-  (sData.exerciseLines || []).slice(0, 6).forEach(function (ex, i) {
-    curY += 74;
+  (sData.detailedExercises || []).slice(0, 6).forEach(function (ex, i) {
+    curY += 78;
     ctx.fillStyle = "rgba(255,255,255,0.05)";
-    roundRect(ctx, 124, curY - 46, 832, 62, 12);
+    drawRoundedBox(ctx, 124, curY - 48, 832, 66, 12);
     ctx.fill();
 
     ctx.fillStyle = "#ebe6dc";
-    ctx.font = "700 28px 'Archivo', sans-serif";
+    ctx.font = "700 26px 'Archivo', sans-serif";
     ctx.textAlign = "left";
-    ctx.fillText(pad(i + 1) + ". " + ex.name.slice(0, 28), 150, curY - 6);
+    ctx.fillText(pad(i + 1) + ". " + ex.name.slice(0, 24), 150, curY - 6);
 
-    ctx.fillStyle = "#ff4422";
-    ctx.font = "800 24px 'JetBrains Mono', monospace";
+    ctx.fillStyle = "#26d07c";
+    ctx.font = "800 20px 'JetBrains Mono', monospace";
     ctx.textAlign = "right";
-    ctx.fillText(ex.setsCount + " SETS", 930, curY - 6);
+    ctx.fillText(ex.comparisonBadge.slice(0, 28), 930, curY - 6);
   });
 
   if (sData.prs && sData.prs.length > 0) {
     curY += 80;
     ctx.textAlign = "left";
-    ctx.fillStyle = "#ff4422";
+    ctx.fillStyle = accentColor;
     ctx.font = "800 28px 'JetBrains Mono', monospace";
-    ctx.fillText("🏆 " + sData.prs.length + " NEW PERSONAL RECORD(S) BROKEN!", 124, curY);
+    ctx.fillText(sData.prs.length + " NEW PERSONAL RECORD(S) SET TODAY", 124, curY);
   }
 
   ctx.fillStyle = "#9a968c";
   ctx.font = "800 26px 'JetBrains Mono', monospace";
   ctx.textAlign = "center";
-  ctx.fillText("BUILT WITH STRVEX // STRENGTH LOGBOOK", 540, 1765);
+  ctx.fillText("STRVEX // STRENGTH LOGBOOK", 540, 1765);
 
   finalizeExport();
 }
@@ -2143,37 +2851,58 @@ $("sumDoneBtn").addEventListener("click", closeSummaryModal);
 $("sumCloseBtn").addEventListener("click", closeSummaryModal);
 $("summaryBackdrop").addEventListener("click", closeSummaryModal);
 
-// ---------- Finish Session / Save Edited Routine / Save Edited Log ----------
-function finishWorkout() {
+// ---------- Finish Session / Save Routine / Save Edited Log ----------
+async function finishWorkout() {
   if (editingRoutineId) {
+    const isCreatingNew = (editingRoutineId === "__NEW__");
     const routineExercises = [];
     document.querySelectorAll("#exerciseList .exCard").forEach(function (card) {
+      const workingRows = Array.prototype.filter.call(
+        card.querySelectorAll(".setRow"),
+        row => row.dataset.type !== "W"
+      );
       routineExercises.push({
         exId: card.dataset.exid,
-        sets: Math.max(card.querySelectorAll(".setRow").length, 1),
-        reps: card.dataset.targetreps || "8-10"
+        sets: Math.max(workingRows.length, 1),
+        reps: card.dataset.targetreps || (exTypeOf(card.dataset.exid) === "time" ? "45-60s" : "8-10"),
+        isSuperset: card.classList.contains("isSuperset")
       });
     });
     if (routineExercises.length === 0) {
-      alert("Add at least one exercise to save this routine.");
+      await appAlert("EMPTY ROUTINE", "Add at least one exercise to save this routine.");
       return;
     }
-    const allRoutines = getRoutines();
-    const rIdx = allRoutines.findIndex(r => r.id === editingRoutineId);
+
+    const allRoutines = getRoutines().slice();
     const updatedName = $("wTitle").value.trim() || "Custom Routine";
     const updatedDesc = $("wNotes").value.trim();
 
-    if (rIdx !== -1) {
-      allRoutines[rIdx].name = updatedName;
-      if (updatedDesc) allRoutines[rIdx].description = updatedDesc;
-      allRoutines[rIdx].exercises = routineExercises;
-      allRoutines[rIdx].userEdited = true;
-      saveRoutines(allRoutines);
+    if (isCreatingNew) {
+      allRoutines.push({
+        id: newId(),
+        name: updatedName,
+        category: "Custom Templates",
+        description: updatedDesc || "Custom routine template.",
+        exercises: routineExercises
+      });
+    } else {
+      const rIdx = allRoutines.findIndex(r => r.id === editingRoutineId);
+      if (rIdx !== -1) {
+        allRoutines[rIdx].name = updatedName;
+        if (updatedDesc) allRoutines[rIdx].description = updatedDesc;
+        allRoutines[rIdx].exercises = routineExercises;
+        allRoutines[rIdx].userEdited = true;
+      }
+    }
+
+    if (!saveRoutines(allRoutines)) {
+      await appAlert("SAVE FAILED", "Could not write routine to device storage. Please export a backup first.");
+      return;
     }
     clearDraft();
     endWorkoutUI();
     showTab("workout");
-    showToast("Routine updated ✓");
+    showToast(isCreatingNew ? "Routine created" : "Routine updated");
     return;
   }
 
@@ -2195,9 +2924,10 @@ function finishWorkout() {
   });
 
   if (unloggedValidRows.length > 0) {
-    const includeUnticked = confirm(
-      "You have " + unloggedValidRows.length + " filled set(s) that are not marked complete (✓).\n\n" +
-      "Press OK to mark them complete and save them, or Cancel to return to your workout."
+    const includeUnticked = await appConfirm(
+      "UNCHECKED SETS DETECTED",
+      "You have " + unloggedValidRows.length + " filled set(s) that are not marked complete (✓).\n\nMark them complete and include them in your workout?",
+      "INCLUDE & SAVE"
     );
     if (!includeUnticked) return;
     unloggedValidRows.forEach(function (row) {
@@ -2212,6 +2942,7 @@ function finishWorkout() {
   document.querySelectorAll("#exerciseList .exCard").forEach(function (card) {
     const exId = card.dataset.exid;
     const sets = [];
+    const p1SetsForPr = [];
 
     card.querySelectorAll(".setRow").forEach(function (row) {
       const kgInput = row.querySelector(".kgInput");
@@ -2229,21 +2960,28 @@ function finishWorkout() {
           type: row.dataset.type || "N"
         };
         if (row.dataset.rpe) setObj.rpe = Number(row.dataset.rpe);
+        if (duoPartnerName && row.dataset.lifter === "p2") {
+          setObj.lifter = "p2";
+        } else {
+          p1SetsForPr.push(setObj);
+        }
         sets.push(setObj);
       }
     });
 
     if (sets.length > 0) {
-      findPRs(exId, sets, editingWorkoutId).forEach(function (pr) {
-        prs.push({
-          exId: exId,
-          kind: pr.kind,
-          val: pr.val,
-          isReps: pr.isReps,
-          isTime: pr.isTime,
-          name: exName(exId)
+      if (p1SetsForPr.length > 0) {
+        findPRs(exId, p1SetsForPr, editingWorkoutId).forEach(function (pr) {
+          prs.push({
+            exId: exId,
+            kind: pr.kind,
+            val: pr.val,
+            isReps: pr.isReps,
+            isTime: pr.isTime,
+            name: exName(exId)
+          });
         });
-      });
+      }
       exercises.push({
         exId: exId,
         sets: sets,
@@ -2253,17 +2991,36 @@ function finishWorkout() {
   });
 
   if (exercises.length === 0) {
-    alert("No completed sets logged. Enter your values and tap ✓ on at least one set before saving.");
+    await appAlert("NO SETS LOGGED", "Enter your numbers and tap ✓ on at least one set before finishing.");
     return;
   }
 
   if (unloggedValidRows.length === 0 && !editingWorkoutId) {
-    if (!confirm("Finish and save this workout session?")) return;
+    const ok = await appConfirm("FINISH WORKOUT", "Complete and save this workout session?", "SAVE WORKOUT");
+    if (!ok) return;
   }
 
-  const hist = getHistory();
+  const hist = getHistory().slice();
   const sessionTitle = $("wTitle").value.trim() || "Strength Session";
   const sessionNotes = $("wNotes").value.trim();
+
+  // Check if user specified a custom date or custom duration (Works for both New Backdated Workouts & Edited Workouts!)
+  let finalTs = editingWorkoutId ? workoutStart : Date.now();
+  const dateStr = $("wDateInput") ? $("wDateInput").value : "";
+  if (dateStr) {
+    const parts = dateStr.split("-");
+    if (parts.length === 3) {
+      const refD = new Date(finalTs);
+      const customD = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]), refD.getHours(), refD.getMinutes());
+      if (Number.isFinite(customD.getTime())) finalTs = customD.getTime();
+    }
+  }
+
+  let finalDuration = Math.max(60000, Date.now() - workoutStart);
+  const durMin = $("wDurationInput") ? Number($("wDurationInput").value) : 0;
+  if (Number.isFinite(durMin) && durMin >= 1 && durMin <= 600) {
+    finalDuration = Math.round(durMin) * 60000;
+  }
 
   if (editingWorkoutId) {
     const idx = hist.findIndex(w => w.id === editingWorkoutId);
@@ -2272,79 +3029,102 @@ function finishWorkout() {
       hist[idx].notes = sessionNotes;
       hist[idx].exercises = exercises;
       hist[idx].prs = prs;
-      saveHistory(hist);
+      hist[idx].ts = finalTs;
+      hist[idx].date = new Date(finalTs).toLocaleString();
+      hist[idx].duration = finalDuration;
+      if (duoPartnerName) hist[idx].partnerName = duoPartnerName;
+      else delete hist[idx].partnerName;
+
+      if (!saveHistory(hist)) {
+        await appAlert("SAVE FAILED", "Device storage is full! Your changes could not be written. Please export a backup.");
+        return;
+      }
       const updatedObj = hist[idx];
       clearDraft();
       endWorkoutUI();
       updateHeaderAthleteBadge();
       renderTab("history");
-      showToast("Workout log updated ✓");
+      showToast("Workout log updated");
       showSummaryModal(buildSummaryFromWorkout(updatedObj), true);
       return;
     }
   }
 
-  const duration = Date.now() - workoutStart;
   const workoutObj = {
     id: newId(),
     title: sessionTitle,
     notes: sessionNotes,
-    ts: Date.now(),
-    date: new Date().toLocaleString(),
-    duration: duration,
+    ts: finalTs,
+    date: new Date(finalTs).toLocaleString(),
+    duration: finalDuration,
     exercises: exercises,
     prs: prs
   };
+  if (duoPartnerName) workoutObj.partnerName = duoPartnerName;
 
   hist.push(workoutObj);
-  saveHistory(hist);
+  hist.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+
+  if (!saveHistory(hist)) {
+    await appAlert("STORAGE FULL", "Could not save workout to browser storage. Your active workout draft is still safe—please go to Settings > Export JSON Backup and free space.");
+    return;
+  }
+
   clearDraft();
   endWorkoutUI();
   updateHeaderAthleteBadge();
   renderTab(currentTab);
   playPrFanfare();
-  showToast("Workout Complete! Great job 🔥");
+  showToast("Workout Complete! +" + calculateWorkoutXP(workoutObj) + " XP");
 
   showSummaryModal(buildSummaryFromWorkout(workoutObj), false);
 }
 
-function saveAsRoutine() {
+async function saveAsRoutine() {
   const exercises = [];
   document.querySelectorAll("#exerciseList .exCard").forEach(function (card) {
+    const workingRows = Array.prototype.filter.call(
+      card.querySelectorAll(".setRow"),
+      row => row.dataset.type !== "W" && row.dataset.lifter !== "p2"
+    );
     exercises.push({
       exId: card.dataset.exid,
-      sets: Math.max(card.querySelectorAll(".setRow").length, 1),
-      reps: card.dataset.targetreps || (exTypeOf(card.dataset.exid) === "time" ? "45-60s" : "8-10")
+      sets: Math.max(workingRows.length, 1),
+      reps: card.dataset.targetreps || (exTypeOf(card.dataset.exid) === "time" ? "45-60s" : "8-10"),
+      isSuperset: card.classList.contains("isSuperset")
     });
   });
   if (exercises.length === 0) {
-    alert("Add at least one exercise to save a routine template.");
+    await appAlert("NO EXERCISES", "Add at least one exercise before saving a routine template.");
     return;
   }
-  const routineName = prompt("Enter Routine Name:", $("wTitle").value);
+  const routineName = await appPrompt("SAVE AS ROUTINE", "Enter a name for this routine template:", $("wTitle").value, "e.g. Push Day A");
   if (!routineName || !routineName.trim()) return;
-  const routines = getRoutines();
+  const routines = getRoutines().slice();
   routines.push({
     id: newId(),
     name: routineName.trim(),
     category: "Custom Templates",
     exercises: exercises
   });
-  saveRoutines(routines);
-  showToast("Routine saved ✓");
+  if (saveRoutines(routines)) {
+    showToast("Routine template saved");
+  }
 }
 
-function discardWorkout() {
+async function discardWorkout() {
   const msg = editingRoutineId
-    ? "Cancel editing this routine? Unsaved changes will be discarded."
-    : (editingWorkoutId ? "Cancel editing this workout log? Unsaved changes will be discarded." : "Discard this workout session? Logged sets will not be saved.");
-  if (!confirm(msg)) return;
+    ? "Discard unsaved changes to this routine?"
+    : (editingWorkoutId ? "Cancel editing this workout log? Unsaved changes will be lost." : "Discard this active workout? Logged sets will not be saved.");
+  const ok = await appConfirm("DISCARD SESSION", msg, "DISCARD");
+  if (!ok) return;
   clearDraft();
   endWorkoutUI();
   renderTab(currentTab);
 }
 
 $("startBtn").addEventListener("click", startWorkout);
+if ($("createRoutineBtn")) $("createRoutineBtn").addEventListener("click", startNewRoutineBuilder);
 $("resumeBtn").addEventListener("click", openWorkoutScreen);
 if ($("miniDiscardBtn")) $("miniDiscardBtn").addEventListener("click", discardWorkout);
 $("minimizeBtn").addEventListener("click", minimizeWorkout);
@@ -2356,7 +3136,7 @@ $("plus30").addEventListener("click", function () { addRest(30); });
 $("skipTimer").addEventListener("click", stopTimer);
 
 // =====================================================
-//  EXERCISE PICKER, SWAP & MANAGEMENT SHEET
+//  EXERCISE PICKER, SWAP & MANAGEMENT SHEET (Unlocked formType!)
 // =====================================================
 function showSheet() {
   $("sheetBackdrop").classList.remove("hidden");
@@ -2506,9 +3286,10 @@ function renderPickList() {
           const kgInput = r.querySelector(".kgInput");
           const repsInput = r.querySelector(".repsInput");
           preservedSets.push({
-            kg: kgInput ? kgInput.value : "",
+            displayWeight: kgInput ? kgInput.value : "",
             reps: repsInput ? repsInput.value : "",
             rpe: r.dataset.rpe ? Number(r.dataset.rpe) : null,
+            lifter: r.dataset.lifter || "p1",
             done: r.querySelector(".doneBox").classList.contains("checked"),
             type: r.dataset.type || "N"
           });
@@ -2527,11 +3308,15 @@ function renderPickList() {
         if (replacementCard) {
           targetCard.replaceWith(replacementCard);
           renumberCardIndices();
+          renumberSupersetBadges();
+          updateWorkoutTargetTimeUI();
+          updateDuoBarUI();
           showToast("Swapped to " + ex.name);
           saveDraft();
         }
       } else {
         const card = addExerciseCard(ex.id, 1);
+        updateWorkoutTargetTimeUI();
         saveDraft();
         if (card) card.scrollIntoView({ behavior: "smooth", block: "center" });
       }
@@ -2545,6 +3330,7 @@ function setFormType(v) {
   setSegmented($("formType"), v);
 }
 
+// Unlocked formType even in edit mode so user can switch Pull-ups/Push-ups to Weighted!
 function openForm(mode, ex) {
   sheetMode = mode;
   editingId = ex && ex.id ? ex.id : null;
@@ -2553,7 +3339,7 @@ function openForm(mode, ex) {
   $("formTitle").textContent = mode === "edit" ? "EDIT EXERCISE" : "NEW EXERCISE";
   $("formName").value = ex && ex.name ? ex.name : "";
   setFormType(ex && ex.type ? ex.type : "weight");
-  $("formType").classList.toggle("locked", mode === "edit");
+  $("formType").classList.remove("locked");
   $("formEquipment").value = ex && ex.equipment ? ex.equipment : "Barbell";
   $("formMuscle").value = ex && ex.primary ? ex.primary : (ex && ex.muscle ? ex.muscle : "Chest");
 
@@ -2583,20 +3369,20 @@ function renderSecondarySelector() {
   });
 }
 
-function saveForm() {
+async function saveForm() {
   const nameVal = $("formName").value.trim();
   if (!nameVal) {
-    alert("Please enter a valid exercise name.");
+    await appAlert("INVALID NAME", "Please enter an exercise name.");
     return;
   }
   const primaryMuscle = $("formMuscle").value;
   const equipment = $("formEquipment").value;
   const secondaryMuscles = Array.from(selectedSecondaryMuscles).filter(m => m !== primaryMuscle);
-  const all = getExercises();
+  const all = getExercises().slice();
   const dup = all.find(e => e.name.toLowerCase() === nameVal.toLowerCase() && e.id !== editingId);
 
   if (dup) {
-    alert("An exercise with this name already exists.");
+    await appAlert("DUPLICATE EXERCISE", "An exercise with this name already exists.");
     return;
   }
 
@@ -2604,6 +3390,7 @@ function saveForm() {
     const ex = all.find(e => e.id === editingId);
     if (ex) {
       ex.name = nameVal;
+      ex.type = formType;
       ex.primary = primaryMuscle;
       ex.equipment = equipment;
       ex.secondary = secondaryMuscles;
@@ -2634,28 +3421,32 @@ function saveForm() {
       const replacement = addExerciseCard(ex.id, 1, null, targetSwapCard.classList.contains("isSuperset"), "", true);
       targetSwapCard.replaceWith(replacement);
       renumberCardIndices();
+      renumberSupersetBadges();
+      updateWorkoutTargetTimeUI();
       saveDraft();
     } else {
       const card = addExerciseCard(ex.id, 1);
+      updateWorkoutTargetTimeUI();
       saveDraft();
       if (card) card.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   } else {
     renderLibrary();
-    showToast("Exercise saved to database");
+    showToast("Exercise saved");
   }
 }
 
-function deleteExercise() {
+async function deleteExercise() {
   const inWorkout = Array.prototype.some.call(
     document.querySelectorAll("#exerciseList .exCard"),
     c => c.dataset.exid === editingId
   );
   if (isExerciseUsed(editingId) || inWorkout) {
-    alert("This exercise has recorded workout data and cannot be deleted. You can rename it instead.");
+    await appAlert("CANNOT DELETE", "This exercise has recorded workout data and cannot be deleted. You can rename it instead.");
     return;
   }
-  if (!confirm("Permanently delete this exercise?")) return;
+  const ok = await appConfirm("DELETE EXERCISE", "Permanently delete this exercise from the library?", "DELETE");
+  if (!ok) return;
   saveExercises(getExercises().filter(e => e.id !== editingId));
   closeSheet();
   renderLibrary();
@@ -2769,15 +3560,16 @@ $("calNext").addEventListener("click", function () {
   renderHistoryTab();
 });
 
-function setsText(ex) {
+function setsText(ex, partnerName) {
   const type = exTypeOf(ex.exId);
   const unit = unitName().toUpperCase();
   return (ex.sets || []).map(function (s) {
+    const pTag = (partnerName && s.lifter === "p2") ? (partnerName.toUpperCase() + ": ") : "";
     const label = s.type && s.type !== "N" ? "[" + s.type + "] " : "";
     const rpeStr = s.rpe ? " @" + s.rpe : "";
-    if (type === "time") return label + s.reps + " sec" + rpeStr;
-    if (type === "reps") return label + s.reps + " reps" + rpeStr;
-    return label + showWeight(s.kg) + unit + " × " + s.reps + rpeStr;
+    if (type === "time") return pTag + label + s.reps + " sec" + rpeStr;
+    if (type === "reps") return pTag + label + s.reps + " reps" + rpeStr;
+    return pTag + label + showWeight(s.kg) + unit + " x " + s.reps + rpeStr;
   }).join(", ");
 }
 
@@ -2794,7 +3586,7 @@ function renderHistoryList() {
       return d && d.getFullYear() === calYear && d.getMonth() === calMonth && d.getDate() === selectedCalDay;
     });
     if ($("historyFilterLabel")) {
-      $("historyFilterLabel").textContent = selectedCalDay + " " + MONTHS_SHORT[calMonth].toUpperCase() + " (TAP DAY AGAIN TO CLEAR)";
+      $("historyFilterLabel").textContent = selectedCalDay + " " + MONTHS_SHORT[calMonth].toUpperCase() + " (TAP DAY TO CLEAR)";
     }
   } else if ($("historyFilterLabel")) {
     $("historyFilterLabel").textContent = hist.length + " TOTAL SESSIONS";
@@ -2804,7 +3596,7 @@ function renderHistoryList() {
     list.innerHTML =
       '<div class="metal-card" style="text-align:center; color:var(--muted); padding:24px 16px;">' +
         '<p style="margin:0 0 4px; font-weight:700;">No workout logs found.</p>' +
-        '<small style="font-family:var(--font-mono);">Completed workouts will appear here with full Flex Cards.</small>' +
+        '<small style="font-family:var(--font-mono);">Completed workouts will appear here with full Progress Reports.</small>' +
       '</div>';
     return;
   }
@@ -2816,7 +3608,7 @@ function renderHistoryList() {
     card.className = "history-card";
 
     const title = document.createElement("h3");
-    title.textContent = w.title || "Strength Session";
+    title.textContent = (w.title || "Strength Session") + (w.partnerName ? (" [DUO: " + w.partnerName.toUpperCase() + "]") : "");
     card.appendChild(title);
 
     const meta = document.createElement("div");
@@ -2838,7 +3630,7 @@ function renderHistoryList() {
     (w.prs || []).forEach(function (pr) {
       const chip = document.createElement("span");
       chip.className = "chip-pr";
-      chip.textContent = "🏆 " + (pr.name || exName(pr.exId)) + " · " + pr.kind + " (" + formatPRValue(pr) + ")";
+      chip.textContent = "PR: " + (pr.name || exName(pr.exId)) + " · " + pr.kind + " (" + formatPRValue(pr) + ")";
       card.appendChild(chip);
     });
 
@@ -2846,10 +3638,10 @@ function renderHistoryList() {
       const line = document.createElement("div");
       line.className = "history-exercise-line";
       const name = document.createElement("b");
-      name.textContent = exName(ex.exId) + (ex.isSuperset ? " ⚡" : "");
+      name.textContent = exName(ex.exId) + (ex.isSuperset ? " [SS]" : "");
       const sub = document.createElement("div");
       sub.className = "history-sets-sub";
-      sub.textContent = setsText(ex);
+      sub.textContent = setsText(ex, w.partnerName);
       line.appendChild(name);
       line.appendChild(sub);
       card.appendChild(line);
@@ -2860,21 +3652,21 @@ function renderHistoryList() {
 
     const sumBtn = document.createElement("button");
     sumBtn.className = "keycap-btn primary";
-    sumBtn.textContent = "FLEX CARD";
+    sumBtn.textContent = "REPORT";
     sumBtn.addEventListener("click", function () {
       showSummaryModal(buildSummaryFromWorkout(w), true);
     });
 
     const editBtn = document.createElement("button");
     editBtn.className = "keycap-btn";
-    editBtn.textContent = "✎ EDIT";
+    editBtn.textContent = "EDIT";
     editBtn.addEventListener("click", function () {
       editHistoryWorkout(w);
     });
 
     const repBtn = document.createElement("button");
     repBtn.className = "keycap-btn";
-    repBtn.textContent = "↻ REPEAT";
+    repBtn.textContent = "REPEAT";
     repBtn.addEventListener("click", function () {
       repeatHistoryWorkout(w);
     });
@@ -2883,8 +3675,9 @@ function renderHistoryList() {
     delBtn.className = "keycap-btn danger";
     delBtn.textContent = "✕";
     delBtn.title = "Delete Log";
-    delBtn.addEventListener("click", function () {
-      if (confirm('Delete workout log "' + (w.title || "Strength Session") + '"?')) {
+    delBtn.addEventListener("click", async function () {
+      const ok = await appConfirm("DELETE LOG", 'Permanently delete "' + (w.title || "Strength Session") + '"?', "DELETE");
+      if (ok) {
         const all = getHistory();
         const nextHist = w.id ? all.filter(item => item.id !== w.id) : all.filter(item => item !== w);
         saveHistory(nextHist);
@@ -2919,7 +3712,7 @@ function renderHistoryList() {
 }
 
 // =====================================================
-//  TAB 3: PROGRESS, ACHIEVEMENTS, RECOVERY % & CHARTS
+//  TAB 3: PROGRESS, CONNECTED LVL 1-10 ROADMAP & CHARTS
 // =====================================================
 function renderProgressTab() {
   renderAchievements();
@@ -2932,30 +3725,48 @@ function renderProgressTab() {
 }
 
 function renderAchievements() {
+  const heroBox = $("levelHeroCard");
   const grid = $("achievementsGrid");
-  if (!grid || typeof getAchievements !== "function") return;
-  grid.innerHTML = "";
-
-  const list = getAchievements();
-  let unlockedCount = 0;
-
-  list.forEach(function (ach) {
-    if (ach.unlocked) unlockedCount++;
-    const card = document.createElement("div");
-    card.className = "ach-card" + (ach.unlocked ? " unlocked" : "");
-    card.innerHTML =
-      '<div class="ach-head">' +
-        '<span class="ach-icon">' + ach.icon + '</span>' +
-        '<span class="ach-title">' + esc(ach.title) + '</span>' +
-      '</div>' +
-      '<div class="ach-desc">' + esc(ach.desc) + '</div>' +
-      '<div class="ach-prog">' + (ach.unlocked ? "UNLOCKED ✓" : esc(ach.progress)) + '</div>';
-    grid.appendChild(card);
-  });
+  if (!grid || typeof getAthleteProfile !== "function") return;
+  const prof = getAthleteProfile();
 
   if ($("achievementsCountLabel")) {
-    $("achievementsCountLabel").textContent = unlockedCount + " / " + list.length + " UNLOCKED";
+    $("achievementsCountLabel").textContent = "LVL " + prof.level + " // " + prof.rank;
   }
+
+  if (heroBox) {
+    heroBox.innerHTML =
+      '<div class="level-hero-top">' +
+        '<span class="level-hero-rank">LVL ' + prof.level + ' // ' + esc(prof.rank) + '</span>' +
+        '<span class="level-hero-xp">' + prof.xp.toLocaleString() + ' XP</span>' +
+      '</div>' +
+      '<div style="font-size:12px; color:var(--muted); margin-bottom:6px;">' + esc(prof.rankDesc) + '</div>' +
+      '<div class="level-bar-track">' +
+        '<div class="level-bar-fill" style="width:' + prof.progressPct + '%;"></div>' +
+      '</div>' +
+      '<div class="level-hero-sub">' +
+        '<span>' + prof.workouts + ' Workouts Logged</span>' +
+        '<span>' + (prof.xpToNext > 0 ? (prof.xpToNext + ' XP to LVL ' + (prof.level + 1) + ' (' + esc(prof.nextRank) + ')') : 'MAX LEVEL UNLOCKED') + '</span>' +
+      '</div>';
+  }
+
+  grid.innerHTML = "";
+  (prof.roadmap || []).forEach(function (tier) {
+    const row = document.createElement("div");
+    let cls = "lvl-row";
+    if (tier.isCurrent) cls += " current";
+    else if (tier.unlocked) cls += " unlocked";
+    row.className = cls;
+
+    row.innerHTML =
+      '<span class="lvl-badge-num">LVL ' + tier.level + '</span>' +
+      '<div class="lvl-info">' +
+        '<b>' + esc(tier.title) + (tier.isCurrent ? ' (CURRENT)' : (tier.unlocked ? ' ✓' : '')) + '</b>' +
+        '<small>' + esc(tier.desc) + '</small>' +
+      '</div>' +
+      '<span class="lvl-xp-req">' + tier.xpRequired.toLocaleString() + ' XP</span>';
+    grid.appendChild(row);
+  });
 }
 
 function renderMuscleRecovery() {
@@ -3046,7 +3857,9 @@ function renderProgressChart() {
 
   const type = exTypeOf(progressExId);
   const isNoWeight = (type === "reps" || type === "time");
-  $("metricSeg").classList.toggle("hidden", isNoWeight);
+  const isSimple = document.documentElement.getAttribute("data-exp") === "simple";
+  $("metricSeg").classList.toggle("hidden", isNoWeight || isSimple);
+  if (isSimple) progressMetric = "weight";
   setSegmented($("metricSeg"), progressMetric);
   if ($("chartRangeSeg")) setSegmented($("chartRangeSeg"), progressRangeDays);
 
@@ -3063,7 +3876,8 @@ function renderProgressChart() {
 
     (w.exercises || []).forEach(function (e) {
       if (e.exId !== progressExId) return;
-      const st = getStats(e.sets);
+      const p1Sets = (e.sets || []).filter(s => s.lifter !== "p2");
+      const st = getStats(p1Sets);
       let v = st.maxWeight;
       if (isNoWeight) v = st.maxReps;
       else if (progressMetric === "1rm") v = st.best1rm;
@@ -3197,10 +4011,10 @@ function renderBodyWeight() {
   });
 }
 
-$("bwAddBtn").addEventListener("click", function () {
+$("bwAddBtn").addEventListener("click", async function () {
   const v = Number($("bwInput").value);
   if ($("bwInput").value.trim() === "" || !Number.isFinite(v) || v <= 0 || v > 500) {
-    alert("Please enter a valid body weight.");
+    await appAlert("INVALID WEIGHT", "Please enter a valid body weight.");
     return;
   }
   const list = getBodyWeights().filter(e => e.date !== todayKey());
@@ -3212,7 +4026,28 @@ $("bwAddBtn").addEventListener("click", function () {
   showToast("Body weight logged");
 });
 
+function syncMeasurementUnitPicker() {
+  const typeSel = $("measTypeSelect");
+  const unitSel = $("measUnitSelect");
+  if (!typeSel || !unitSel) return;
+  const isBf = typeSel.value === "Body Fat %";
+  unitSel.classList.toggle("hidden", isBf);
+  if (!isBf) unitSel.value = getSettings().measUnit || "in";
+}
+
+if ($("measTypeSelect")) {
+  $("measTypeSelect").addEventListener("change", syncMeasurementUnitPicker);
+}
+if ($("measUnitSelect")) {
+  $("measUnitSelect").addEventListener("change", function () {
+    const s = getSettings();
+    s.measUnit = $("measUnitSelect").value === "cm" ? "cm" : "in";
+    saveSettings(s);
+  });
+}
+
 function renderMeasurements() {
+  syncMeasurementUnitPicker();
   const box = $("measList");
   if (!box || typeof getMeasurements !== "function") return;
   box.innerHTML = "";
@@ -3227,8 +4062,8 @@ function renderMeasurements() {
     const row = document.createElement("div");
     row.className = "bw-row";
     const text = document.createElement("span");
-    const suffix = entry.part === "Body Fat %" ? "%" : "";
-    text.textContent = entry.date + " · " + entry.part + ": " + entry.val + suffix;
+    const u = entry.part === "Body Fat %" ? "%" : (" " + (entry.unit || "in"));
+    text.textContent = entry.date + " · " + entry.part + ": " + entry.val + u;
 
     const del = document.createElement("button");
     del.className = "bw-del-btn";
@@ -3244,29 +4079,42 @@ function renderMeasurements() {
 }
 
 if ($("measAddBtn")) {
-  $("measAddBtn").addEventListener("click", function () {
+  $("measAddBtn").addEventListener("click", async function () {
     const part = $("measTypeSelect").value;
+    const isBf = part === "Body Fat %";
+    const unitVal = isBf ? "%" : ($("measUnitSelect") ? $("measUnitSelect").value : "in");
     const val = Number($("measInput").value);
-    if ($("measInput").value.trim() === "" || !Number.isFinite(val) || val <= 0 || val > 300) {
-      alert("Please enter a valid measurement number.");
-      return;
+
+    if (isBf) {
+      if ($("measInput").value.trim() === "" || !Number.isFinite(val) || val < 3 || val > 65) {
+        await appAlert("INVALID BODY FAT %", "Enter a realistic body fat percentage between 3% and 65%.");
+        return;
+      }
+    } else {
+      const maxLim = unitVal === "cm" ? 250 : 100;
+      if ($("measInput").value.trim() === "" || !Number.isFinite(val) || val <= 2 || val > maxLim) {
+        await appAlert("INVALID MEASUREMENT", "Enter a valid measurement between 2 and " + maxLim + " " + unitVal + ".");
+        return;
+      }
     }
-    const list = getMeasurements();
+
+    const list = getMeasurements().slice();
     list.push({
       id: newId(),
       date: todayKey(),
       part: part,
+      unit: unitVal,
       val: Math.round(val * 10) / 10
     });
     saveMeasurements(list);
     $("measInput").value = "";
     renderMeasurements();
-    showToast(part + " logged ✓");
+    showToast(part + " logged");
   });
 }
 
 // =====================================================
-//  TAB 4: SETTINGS, RPE TOGGLE, THEME, LIBRARY & CSV
+//  TAB 4: SETTINGS, 5 ACCENT COLORS, LIBRARY & CSV
 // =====================================================
 function renderMoreTab() {
   $("moreMain").classList.remove("hidden");
@@ -3274,9 +4122,57 @@ function renderMoreTab() {
   const s = getSettings();
   setSegmented($("unitSeg"), s.unit);
   if ($("themeSeg")) setSegmented($("themeSeg"), s.theme || "dark");
+  if ($("experienceModeSeg")) setSegmented($("experienceModeSeg"), s.experienceMode || "advanced");
   if ($("rpeToggleSeg")) setSegmented($("rpeToggleSeg"), s.showRpe ? "on" : "off");
+  if ($("soundToggleSeg")) setSegmented($("soundToggleSeg"), s.soundMuted ? "mute" : "on");
+  applyAccentColor(s.accent || "flame");
   $("restInput").value = s.rest;
   $("exCount").textContent = getExercises().length + " ›";
+}
+
+if ($("accentColorSeg")) {
+  $("accentColorSeg").addEventListener("click", function (e) {
+    const dot = e.target.closest(".accent-dot");
+    if (!dot || !dot.dataset.v) return;
+    const s = getSettings();
+    s.accent = dot.dataset.v;
+    saveSettings(s);
+    applyAccentColor(s.accent);
+    showToast("Accent color updated");
+  });
+}
+
+if ($("experienceModeSeg")) {
+  bindSegmented($("experienceModeSeg"), function (v) {
+    const s = getSettings();
+    s.experienceMode = v === "simple" ? "simple" : "advanced";
+    saveSettings(s);
+    applyExperienceMode(s.experienceMode);
+    showToast(s.experienceMode === "simple" ? "Simple (Beginner) Mode enabled" : "Advanced (Pro) Mode enabled");
+  });
+}
+
+if ($("soundToggleSeg")) {
+  bindSegmented($("soundToggleSeg"), function (v) {
+    const s = getSettings();
+    s.soundMuted = (v === "mute");
+    saveSettings(s);
+    syncMuteTimerUI();
+    showToast(s.soundMuted ? "Timer audio muted" : "Timer audio enabled");
+  });
+}
+
+if ($("rpeHelpBtn")) {
+  $("rpeHelpBtn").addEventListener("click", function () {
+    appAlert(
+      "WHAT IS RPE?",
+      "RPE (Rate of Perceived Exertion) measures how hard a set felt from 7 to 10:\n\n" +
+      "• @7 = Could do ~3 more reps\n" +
+      "• @8 = Could do ~2 more reps (ideal muscle-building zone)\n" +
+      "• @9 = Could do 1 more rep\n" +
+      "• @10 = Maximum effort, 0 reps left"
+    );
+  });
 }
 
 if ($("rpeToggleSeg")) {
@@ -3285,7 +4181,7 @@ if ($("rpeToggleSeg")) {
     s.showRpe = (v === "on");
     saveSettings(s);
     applyRpeVisibility(s.showRpe);
-    showToast("RPE Column " + (s.showRpe ? "enabled" : "hidden (clean view)"));
+    showToast("RPE Column " + (s.showRpe ? "enabled" : "hidden"));
   });
 }
 
@@ -3295,7 +4191,7 @@ if ($("themeSeg")) {
     s.theme = v;
     saveSettings(s);
     applyTheme(v);
-    showToast(v === "light" ? "Switched to Warm Bone Daylight Theme" : "Switched to Dark Titanium Theme");
+    showToast(v === "light" ? "Warm Bone Light Theme active" : "Dark Titanium Theme active");
   });
 }
 
@@ -3408,7 +4304,7 @@ function renderLibrary() {
   $("exCount").textContent = all.length + " ›";
 }
 
-// Backup Export & Validated Import
+// Backup Export & Deep Schema-Validated Import
 $("exportBtn").addEventListener("click", function () {
   const data = {
     version: 2,
@@ -3427,14 +4323,14 @@ $("exportBtn").addEventListener("click", function () {
   link.href = URL.createObjectURL(blob);
   link.download = "strvex-backup-" + todayKey() + ".json";
   link.click();
-  showToast("Backup exported ✓");
+  showToast("Backup exported");
 });
 
 $("importFile").addEventListener("change", function () {
   const file = $("importFile").files[0];
   if (!file) return;
   const reader = new FileReader();
-  reader.onload = function () {
+  reader.onload = async function () {
     try {
       const data = JSON.parse(reader.result);
       if (!data || typeof data !== "object" || !Array.isArray(data.history) || !Array.isArray(data.routines)) {
@@ -3463,7 +4359,63 @@ $("importFile").addEventListener("change", function () {
           secondary: Array.isArray(e.secondary) ? e.secondary.filter(m => MUSCLES.includes(m)) : []
         }));
 
-      if (!confirm("Restore backup? Your current device logs will be backed up automatically before restoring.")) {
+      const cleanHistory = history
+        .filter(w => w && typeof w === "object" && Array.isArray(w.exercises))
+        .map(w => ({
+          id: typeof w.id === "string" ? w.id : newId(),
+          title: typeof w.title === "string" ? w.title.slice(0, 120) : "Strength Session",
+          notes: typeof w.notes === "string" ? w.notes.slice(0, 500) : "",
+          ts: Number.isFinite(Number(w.ts)) ? Number(w.ts) : Date.now(),
+          date: typeof w.date === "string" ? w.date : new Date().toLocaleString(),
+          duration: Number.isFinite(Number(w.duration)) ? Number(w.duration) : 45 * 60000,
+          partnerName: typeof w.partnerName === "string" ? w.partnerName.slice(0, 20) : undefined,
+          exercises: w.exercises
+            .filter(ex => ex && typeof ex.exId === "string" && Array.isArray(ex.sets))
+            .map(ex => ({
+              exId: ex.exId,
+              isSuperset: !!ex.isSuperset,
+              sets: ex.sets
+                .filter(s => s && typeof s === "object" && Number.isFinite(Number(s.reps)) && Number(s.reps) >= 1)
+                .map(s => {
+                  const cleanSet = {
+                    kg: Math.max(0, Number(s.kg) || 0),
+                    reps: Math.round(Number(s.reps)),
+                    type: ["N", "W", "D", "F"].includes(s.type) ? s.type : "N"
+                  };
+                  if (s.rpe && Number(s.rpe) >= 5 && Number(s.rpe) <= 10) cleanSet.rpe = Number(s.rpe);
+                  if (s.lifter === "p2") cleanSet.lifter = "p2";
+                  return cleanSet;
+                })
+            }))
+            .filter(ex => ex.sets.length > 0),
+          prs: Array.isArray(w.prs) ? w.prs.filter(p => p && typeof p.exId === "string") : []
+        }))
+        .filter(w => w.exercises.length > 0);
+
+      const cleanRoutines = routines
+        .filter(r => r && typeof r === "object" && typeof r.name === "string" && Array.isArray(r.exercises))
+        .map(r => ({
+          id: typeof r.id === "string" ? r.id : newId(),
+          name: r.name.trim().slice(0, 100),
+          category: typeof r.category === "string" ? r.category : "Custom Templates",
+          description: typeof r.description === "string" ? r.description.slice(0, 300) : "",
+          userEdited: !!r.userEdited,
+          exercises: r.exercises
+            .filter(ex => ex && typeof ex.exId === "string")
+            .map(ex => ({
+              exId: ex.exId,
+              sets: Math.max(1, Math.min(20, Math.round(Number(ex.sets) || 3))),
+              reps: typeof ex.reps === "string" ? ex.reps : "8-10",
+              isSuperset: !!ex.isSuperset
+            }))
+        }));
+
+      const ok = await appConfirm(
+        "RESTORE BACKUP",
+        "Found " + cleanHistory.length + " valid workouts and " + cleanRoutines.length + " routines.\n\nCurrent device data will be safely snapshotted before restoring.",
+        "RESTORE"
+      );
+      if (!ok) {
         $("importFile").value = "";
         return;
       }
@@ -3473,22 +4425,35 @@ $("importFile").addEventListener("change", function () {
         exercises: getExercises(),
         history: getHistory(),
         routines: getRoutines(),
-        bodyweight: getBodyWeights()
+        bodyweight: getBodyWeights(),
+        measurements: getMeasurements(),
+        exercise_meta: getExerciseMetaMap(),
+        settings: getSettings()
       });
 
       saveExercises(cleanExercises);
-      saveHistory(history);
-      saveRoutines(routines);
-      if (Array.isArray(data.bodyweight)) saveBodyWeights(data.bodyweight);
-      if (Array.isArray(data.measurements) && typeof saveMeasurements === "function") saveMeasurements(data.measurements);
-      if (data.exercise_meta && typeof saveExerciseMetaMap === "function") saveExerciseMetaMap(data.exercise_meta);
-      if (data.settings && typeof data.settings === "object") saveSettings(data.settings);
+      saveHistory(cleanHistory);
+      saveRoutines(cleanRoutines);
+      if (Array.isArray(data.bodyweight)) {
+        saveBodyWeights(data.bodyweight.filter(b => b && typeof b.date === "string" && Number(b.kg) > 0));
+      }
+      if (Array.isArray(data.measurements)) {
+        saveMeasurements(data.measurements.filter(m => m && typeof m.part === "string" && Number(m.val) > 0));
+      }
+      if (data.exercise_meta && typeof data.exercise_meta === "object" && !Array.isArray(data.exercise_meta)) {
+        saveExerciseMetaMap(data.exercise_meta);
+      }
+      if (data.settings && typeof data.settings === "object") {
+        const cleanSettings = Object.assign({}, data.settings);
+        cleanSettings.spotifyEmbedUrl = sanitizeSpotifyEmbedUrl(cleanSettings.spotifyEmbedUrl);
+        saveSettings(cleanSettings);
+      }
       initializeDatabase();
       clearDraft();
-      showToast("Backup restored ✓");
+      showToast("Backup restored successfully");
       setTimeout(function () { location.reload(); }, 500);
     } catch (e) {
-      alert("Invalid backup file: Please select a valid STRVEX JSON backup file.");
+      await appAlert("INVALID BACKUP FILE", "Please select a valid STRVEX JSON backup file.");
     }
     $("importFile").value = "";
   };
@@ -3500,15 +4465,19 @@ if ($("importCsvFile")) {
     const file = $("importCsvFile").files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = function () {
+    reader.onload = async function () {
       try {
-        const count = importWorkoutsFromCsv(reader.result);
+        const res = importWorkoutsFromCsv(reader.result);
         updateHeroStats();
         updateHeaderAthleteBadge();
-        showToast("Imported " + count + " workouts from CSV ✓");
-        showTab("history");
+        if (res.imported === 0 && res.skipped > 0) {
+          await appAlert("DUPLICATES SKIPPED", "All " + res.skipped + " workout(s) in this CSV already exist in your history.");
+        } else {
+          showToast("Imported " + res.imported + " workout(s)" + (res.skipped > 0 ? " (" + res.skipped + " duplicates skipped)" : ""));
+          showTab("history");
+        }
       } catch (err) {
-        alert("CSV Import Error: " + (err && err.message ? err.message : "Please select a valid Hevy or Strong workout CSV export file."));
+        await appAlert("CSV IMPORT ERROR", (err && err.message) ? err.message : "Please select a valid Hevy or Strong CSV file.");
       }
       $("importCsvFile").value = "";
     };
@@ -3522,12 +4491,15 @@ if ($("importCsvFile")) {
 (function initStrvex() {
   const s = getSettings();
   applyTheme(s.theme || "dark");
-  applyRpeVisibility(s.showRpe);
+  applyAccentColor(s.accent || "flame");
+  applyExperienceMode(s.experienceMode || "advanced");
+  syncMuteTimerUI();
   if (s.defaultTrack) {
     routineCategoryFilter = s.defaultTrack;
   }
   bindRoutineCategoryFilters();
   initMusicDock();
+  initDuoControls();
   restoreDraft();
   updateHeaderAthleteBadge();
   showTab(location.hash.slice(1) || "workout");

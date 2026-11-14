@@ -1,4 +1,4 @@
-// ============ store.js : STRVEX DATA, CACHE, FLEX INSIGHTS, ACHIEVEMENTS & CSV ENGINE ============
+// ============ store.js : STRVEX DATA, XP/LEVELS, MULTI-PR, COMPARISON & CSV ENGINE ============
 
 const MONTHS = ["January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December"];
@@ -7,8 +7,24 @@ const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
 const MUSCLES = ["Chest", "Back", "Shoulders", "Biceps", "Triceps", "Forearms",
   "Quads", "Hamstrings", "Glutes", "Calves", "Core", "Other"];
 const EQUIPMENTS = ["All", "Barbell", "Dumbbell", "Cable", "Machine", "Smith Machine", "Bodyweight"];
+const ACCENT_THEMES = ["flame", "cyan", "crimson", "emerald", "volt"];
+const DEFAULT_SPOTIFY_EMBED = "https://open.spotify.com/embed/playlist/37i9dQZF1DX76Wlfdnj7AP?utm_source=generator&theme=0";
 
-// ---------- High-Speed In-Memory Cache & O(1) Lookup ----------
+// Connected 10-Level RPG Athlete Progression Tiers
+const LEVEL_TIERS = [
+  { level: 1, xp: 0, title: "ROOKIE", desc: "Begin your strength logbook journey" },
+  { level: 2, xp: 250, title: "IRON STARTER", desc: "Complete your first 2 workouts & build baseline habits" },
+  { level: 3, xp: 600, title: "REGULAR LIFTER", desc: "Consistent weekly sessions & initial personal records" },
+  { level: 4, xp: 1200, title: "CONDITIONED", desc: "Solid working set volume & multi-week discipline" },
+  { level: 5, xp: 2200, title: "VANGUARD", desc: "Intermediate strength standard & progressive overload" },
+  { level: 6, xp: 3600, title: "HEAVY HITTER", desc: "High session tonnage & regular PR breakthroughs" },
+  { level: 7, xp: 5500, title: "IRON VETERAN", desc: "Seasoned gym regular with deep movement mastery" },
+  { level: 8, xp: 8000, title: "ELITE LIFTER", desc: "Advanced strength output across all compound lifts" },
+  { level: 9, xp: 11500, title: "TITAN", desc: "Relentless intensity & elite lifetime volume" },
+  { level: 10, xp: 16000, title: "STRVEX APEX", desc: "Peak strength status — top 1% dedication" }
+];
+
+// ---------- High-Speed In-Memory Cache & Safe Atomic Write ----------
 const CACHED_KEYS = new Set([
   "history",
   "routines",
@@ -52,17 +68,18 @@ function read(key, fallback) {
 }
 
 function write(key, value) {
-  if (CACHED_KEYS.has(key)) {
-    _cache[key] = value;
-    if (key === "exercises" && Array.isArray(value)) rebuildExerciseMap(value);
-  }
   try {
-    localStorage.setItem(key, JSON.stringify(value));
+    const serialized = JSON.stringify(value);
+    localStorage.setItem(key, serialized);
+    if (CACHED_KEYS.has(key)) {
+      _cache[key] = value;
+      if (key === "exercises" && Array.isArray(value)) rebuildExerciseMap(value);
+    }
     return true;
   } catch (err) {
     console.error("STRVEX Storage Error:", err);
     if (typeof showToast === "function") {
-      showToast("⚠️ Device storage full! Please export a backup in Settings.");
+      showToast("Storage full! Export a JSON backup in Settings before closing.");
     }
     return false;
   }
@@ -73,6 +90,13 @@ function newId() {
 }
 function pad(n) {
   return String(n).padStart(2, "0");
+}
+
+function sanitizeSpotifyEmbedUrl(url) {
+  if (typeof url !== "string") return DEFAULT_SPOTIFY_EMBED;
+  const trimmed = url.trim();
+  const match = trimmed.match(/^https:\/\/open\.spotify\.com\/embed\/(playlist|album|track)\/([a-zA-Z0-9]+)(\?[^\s"'<>]*)?$/);
+  return match ? trimmed : DEFAULT_SPOTIFY_EMBED;
 }
 
 function getHistory() { return read("history", []); }
@@ -89,31 +113,93 @@ function saveMeasurements(v) { return write("measurements", v); }
 function getSettings() {
   const s = read("settings", {});
   return {
-    userName: s && typeof s.userName === "string" ? s.userName.trim() : "",
+    userName: s && typeof s.userName === "string" ? s.userName.trim().slice(0, 24) : "",
     theme: s && s.theme === "light" ? "light" : "dark",
+    accent: s && ACCENT_THEMES.includes(s.accent) ? s.accent : "flame",
     onboarded: !!(s && s.onboarded),
-    defaultTrack: s && s.defaultTrack ? String(s.defaultTrack) : "all",
-    showRpe: !!(s && s.showRpe), // OFF by default like Hevy
-    spotifyEmbedUrl: s && s.spotifyEmbedUrl ? String(s.spotifyEmbedUrl) : "https://open.spotify.com/embed/playlist/37i9dQZF1DX76Wlfdnj7AP?utm_source=generator&theme=0",
+    defaultTrack: s && typeof s.defaultTrack === "string" ? s.defaultTrack : "all",
+    experienceMode: s && s.experienceMode === "simple" ? "simple" : "advanced",
+    showRpe: !!(s && s.showRpe),
+    soundMuted: !!(s && s.soundMuted),
+    measUnit: s && s.measUnit === "cm" ? "cm" : "in",
+    spotifyEmbedUrl: sanitizeSpotifyEmbedUrl(s && s.spotifyEmbedUrl),
     unit: s && s.unit === "lbs" ? "lbs" : "kg",
-    rest: s && Number(s.rest) > 0 ? Number(s.rest) : 60,
+    rest: s && Number(s.rest) > 0 ? Math.min(600, Math.round(Number(s.rest))) : 60,
     barKg: s && Number(s.barKg) >= 0 ? Number(s.barKg) : 20,
     barLbs: s && Number(s.barLbs) >= 0 ? Number(s.barLbs) : 45
   };
 }
-function saveSettings(s) { return write("settings", s); }
+function saveSettings(s) {
+  if (s && s.spotifyEmbedUrl) s.spotifyEmbedUrl = sanitizeSpotifyEmbedUrl(s.spotifyEmbedUrl);
+  return write("settings", s);
+}
 function unitName() { return getSettings().unit; }
+
+// ---------- Connected XP & Level Roadmap Engine ----------
+function calculateWorkoutXP(w) {
+  if (!w) return 0;
+  let setsCount = 0;
+  (w.exercises || []).forEach(function (ex) {
+    setsCount += (ex.sets || []).filter(s => s.type !== "W" && s.lifter !== "p2").length;
+  });
+  const prsCount = (w.prs || []).length;
+  const volKg = workoutVolume(w);
+  return 100 + (setsCount * 10) + (prsCount * 25) + Math.round((volKg / 1000) * 15);
+}
 
 function getAthleteProfile() {
   const s = getSettings();
-  const count = getHistory().length;
-  const level = Math.floor(count / 3) + 1;
+  const hist = getHistory();
+  let totalXp = 0;
+  hist.forEach(function (w) {
+    totalXp += calculateWorkoutXP(w);
+  });
+
+  let currentTier = LEVEL_TIERS[0];
+  let nextTier = LEVEL_TIERS[1];
+  for (let i = 0; i < LEVEL_TIERS.length; i++) {
+    if (totalXp >= LEVEL_TIERS[i].xp) {
+      currentTier = LEVEL_TIERS[i];
+      nextTier = LEVEL_TIERS[i + 1] || null;
+    }
+  }
+
+  let progressPct = 100;
+  let xpInTier = totalXp - currentTier.xp;
+  let tierSpan = 1000;
+  let xpToNext = 0;
+
+  if (nextTier) {
+    tierSpan = nextTier.xp - currentTier.xp;
+    progressPct = Math.min(99, Math.max(2, Math.round((xpInTier / tierSpan) * 100)));
+    xpToNext = nextTier.xp - totalXp;
+  }
+
   const rawName = s.userName ? s.userName.toUpperCase() : "ATHLETE";
+  const roadmap = LEVEL_TIERS.map(function (t) {
+    return {
+      level: t.level,
+      xpRequired: t.xp,
+      title: t.title,
+      desc: t.desc,
+      unlocked: totalXp >= t.xp,
+      isCurrent: t.level === currentTier.level
+    };
+  });
+
   return {
     name: rawName,
     hasCustomName: !!s.userName,
-    level: level,
-    workouts: count
+    level: currentTier.level,
+    rank: currentTier.title,
+    rankDesc: currentTier.desc,
+    xp: totalXp,
+    nextLevelXp: nextTier ? nextTier.xp : currentTier.xp,
+    nextRank: nextTier ? nextTier.title : "MAX LEVEL",
+    xpToNext: xpToNext,
+    progressPct: progressPct,
+    workouts: hist.length,
+    roadmap: roadmap
   };
 }
 
@@ -151,6 +237,20 @@ function saveExerciseRest(exId, seconds) {
   const sec = Number(seconds);
   m[exId].rest = (Number.isFinite(sec) && sec > 0) ? Math.round(sec) : 0;
   saveExerciseMetaMap(m);
+}
+
+// ---------- Estimated Workout Time Target Calculator ----------
+function estimateWorkoutMinutes(exercisesList) {
+  if (!Array.isArray(exercisesList) || exercisesList.length === 0) return 0;
+  let totalSec = 120; // 2 min initial warm-up/setup
+  exercisesList.forEach(function (item) {
+    const exId = item.exId;
+    const setsCount = Math.max(1, Number(item.sets) || 3);
+    const restSec = getExerciseRest(exId);
+    // ~40s active work per set + rest between sets + 75s equipment transition
+    totalSec += (setsCount * 40) + (setsCount * restSec) + 75;
+  });
+  return Math.max(10, Math.round(totalSec / 60 / 5) * 5);
 }
 
 function getDeletedCuratedRoutines() {
@@ -407,30 +507,35 @@ function calculatePlates(targetWeight, barWeight, unit) {
   };
 }
 
-function generateWarmupSets(workingWeight, unit) {
+function generateWarmupSets(workingDisplayWeight, unit, equipment) {
   const u = unit || unitName();
+  const isBarbell = (equipment === "Barbell" || equipment === "Smith Machine");
   const step = u === "lbs" ? 5 : 2.5;
-  const minBar = u === "lbs" ? 45 : 20;
-  const w = Number(workingWeight) || 0;
-  if (w <= minBar) return [];
+  const minWeight = isBarbell ? (u === "lbs" ? 45 : 20) : (u === "lbs" ? 10 : 5);
+  const w = Number(workingDisplayWeight) || 0;
+  if (w <= minWeight) return [];
 
   function roundStep(val) {
-    return Math.max(minBar, Math.round(val / step) * step);
+    return Math.max(minWeight, Math.round(val / step) * step);
   }
 
-  const rawScheme = [
-    { pct: 0.50, reps: 8 },
-    { pct: 0.70, reps: 5 },
-    { pct: 0.85, reps: 2 }
-  ];
+  const scheme = isBarbell
+    ? [{ pct: 0.50, reps: 8 }, { pct: 0.70, reps: 5 }, { pct: 0.85, reps: 2 }]
+    : [{ pct: 0.55, reps: 10 }, { pct: 0.75, reps: 6 }];
 
   const warmups = [];
   const usedWeights = new Set();
-  rawScheme.forEach(function (item) {
+  scheme.forEach(function (item) {
     const wt = roundStep(w * item.pct);
     if (wt < w && !usedWeights.has(wt)) {
       usedWeights.add(wt);
-      warmups.push({ kg: wt, reps: item.reps, type: "W", done: false });
+      warmups.push({
+        displayWeight: String(wt),
+        kg: u === "lbs" ? (wt / 2.20462) : wt,
+        reps: item.reps,
+        type: "W",
+        done: false
+      });
     }
   });
   return warmups;
@@ -448,6 +553,11 @@ function workoutDate(w) {
   const month = b > 12 ? a : b;
   const day = b > 12 ? b : a;
   return new Date(y, month - 1, day);
+}
+
+function toDateInputValue(ts) {
+  const d = ts ? new Date(ts) : new Date();
+  return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
 }
 
 function weekStart(d) {
@@ -468,7 +578,7 @@ function fmtShort(d) {
   return d.getDate() + " " + MONTHS_SHORT[d.getMonth()];
 }
 
-// ---------- Strength Stats, Plateau Detector, PR & 1RM ----------
+// ---------- Strength Stats, Hevy-Style Set-by-Set Live PRs & Session PRs ----------
 function e1rm(kg, reps) {
   if (reps <= 0 || kg <= 0) return 0;
   if (reps === 1) return kg;
@@ -498,7 +608,9 @@ function getAllSets(exId, excludeWorkoutId) {
     if (excludeWorkoutId && w.id === excludeWorkoutId) return;
     (w.exercises || []).forEach(function (ex) {
       if (ex.exId === exId) {
-        (ex.sets || []).forEach(s => all.push(s));
+        (ex.sets || []).forEach(function (s) {
+          if (s.lifter !== "p2") all.push(s);
+        });
       }
     });
   });
@@ -510,7 +622,10 @@ function getPrevious(exId, excludeWorkoutId) {
   for (let i = hist.length - 1; i >= 0; i--) {
     if (excludeWorkoutId && hist[i].id === excludeWorkoutId) continue;
     for (const ex of (hist[i].exercises || [])) {
-      if (ex.exId === exId) return ex.sets || [];
+      if (ex.exId === exId) {
+        const p1Sets = (ex.sets || []).filter(s => s.lifter !== "p2");
+        if (p1Sets.length > 0) return p1Sets;
+      }
     }
   }
   return [];
@@ -524,11 +639,13 @@ function getExerciseHistory(exId, limit, excludeWorkoutId) {
     if (excludeWorkoutId && w.id === excludeWorkoutId) continue;
     for (const ex of (w.exercises || [])) {
       if (ex.exId === exId && ex.sets && ex.sets.length > 0) {
+        const p1Sets = ex.sets.filter(s => s.lifter !== "p2");
+        if (p1Sets.length === 0) continue;
         const d = workoutDate(w);
         logs.push({
           workoutTitle: w.title || "Strength Session",
           dateStr: d ? fmtShort(d) + " " + d.getFullYear() : (w.date || ""),
-          sets: ex.sets
+          sets: p1Sets
         });
         break;
       }
@@ -552,62 +669,177 @@ function detectPlateau(exId, excludeWorkoutId) {
   return (s0.best1rm > 0 && s0.best1rm <= s1.best1rm + 0.1 && s1.best1rm <= s2.best1rm + 0.1);
 }
 
-function findPRs(exId, newSets, excludeWorkoutId) {
+// Hevy-Style Live Set-Level PR Evaluator (Checks Weight, 1RM, Set Volume & Reps without dropping any!)
+function evaluateSetLivePRs(exId, setKg, repsVal, runningBest) {
   const EPS = 0.05;
-  const old = getStats(getAllSets(exId, excludeWorkoutId));
-  const now = getStats(newSets);
   const type = exTypeOf(exId);
+  const broken = [];
 
   if (type === "time") {
-    if (old.maxReps > 0 && now.maxReps > old.maxReps) {
-      return [{
-        exId: exId,
-        kind: "Longest Hold",
-        val: now.maxReps,
-        isTime: true,
-        isReps: true
-      }];
+    if (repsVal > 0 && repsVal > runningBest.maxReps) {
+      runningBest.maxReps = repsVal;
+      broken.push("LONGEST HOLD (" + repsVal + "s)");
     }
-    return [];
+    return broken;
   }
 
   if (type === "reps") {
-    if (old.maxReps > 0 && now.maxReps > old.maxReps) {
-      return [{
-        exId: exId,
-        kind: "Max Reps",
-        val: now.maxReps,
-        isReps: true
-      }];
+    if (repsVal > 0 && repsVal > runningBest.maxReps) {
+      runningBest.maxReps = repsVal;
+      broken.push("MAX REPS (" + repsVal + ")");
     }
-    return [];
+    return broken;
   }
 
-  if (old.maxWeight > 0 && now.maxWeight > old.maxWeight + EPS) {
-    return [{
+  const unit = unitName().toUpperCase();
+  const isFirstEver = (runningBest.maxWeight === 0 && runningBest.best1rm === 0 && runningBest.bestSetVol === 0);
+
+  if (isFirstEver) {
+    if (setKg > 0 && repsVal > 0) {
+      runningBest.maxWeight = setKg;
+      runningBest.best1rm = e1rm(setKg, repsVal);
+      runningBest.bestSetVol = setKg * repsVal;
+      broken.push("1ST RECORD (" + showWeight(setKg) + " " + unit + " x " + repsVal + ")");
+    }
+    return broken;
+  }
+
+  if (setKg > runningBest.maxWeight + EPS) {
+    runningBest.maxWeight = setKg;
+    broken.push("HEAVIEST WEIGHT (" + showWeight(setKg) + " " + unit + ")");
+  }
+  const est = e1rm(setKg, repsVal);
+  if (est > runningBest.best1rm + EPS) {
+    runningBest.best1rm = est;
+    broken.push("EST. 1RM (" + showWeight(est) + " " + unit + ")");
+  }
+  const vol = setKg * repsVal;
+  if (vol > runningBest.bestSetVol + EPS) {
+    runningBest.bestSetVol = vol;
+    broken.push("BEST SET VOLUME (" + showWeight(vol) + " " + unit + ")");
+  }
+  return broken;
+}
+
+// Hevy-Style Complete Session PR Finder (Evaluates all 3 categories: Weight, 1RM, Set Volume!)
+function findPRs(exId, newSets, excludeWorkoutId, priorSetsOverride) {
+  const EPS = 0.05;
+  const oldSets = priorSetsOverride !== undefined ? priorSetsOverride : getAllSets(exId, excludeWorkoutId);
+  const old = getStats(oldSets);
+  const now = getStats(newSets);
+  const type = exTypeOf(exId);
+  const prs = [];
+
+  if (type === "time") {
+    if (now.maxReps > 0 && (old.maxReps === 0 || now.maxReps > old.maxReps)) {
+      prs.push({
+        exId: exId,
+        kind: old.maxReps === 0 ? "First Record" : "Longest Hold",
+        val: now.maxReps,
+        isTime: true,
+        isReps: true
+      });
+    }
+    return prs;
+  }
+
+  if (type === "reps") {
+    if (now.maxReps > 0 && (old.maxReps === 0 || now.maxReps > old.maxReps)) {
+      prs.push({
+        exId: exId,
+        kind: old.maxReps === 0 ? "First Record" : "Max Reps",
+        val: now.maxReps,
+        isReps: true
+      });
+    }
+    return prs;
+  }
+
+  if (old.maxWeight === 0 && old.best1rm === 0) {
+    if (now.maxWeight > 0) {
+      prs.push({
+        exId: exId,
+        kind: "Heaviest Weight",
+        val: now.maxWeight,
+        isReps: false
+      });
+      prs.push({
+        exId: exId,
+        kind: "Est. 1RM",
+        val: now.best1rm,
+        isReps: false
+      });
+    }
+    return prs;
+  }
+
+  if (now.maxWeight > old.maxWeight + EPS) {
+    prs.push({
       exId: exId,
       kind: "Heaviest Weight",
       val: now.maxWeight,
       isReps: false
-    }];
+    });
   }
-  if (old.best1rm > 0 && now.best1rm > old.best1rm + EPS) {
-    return [{
+  if (now.best1rm > old.best1rm + EPS) {
+    prs.push({
       exId: exId,
       kind: "Est. 1RM",
       val: now.best1rm,
       isReps: false
-    }];
+    });
   }
-  if (old.bestSetVol > 0 && now.bestSetVol > old.bestSetVol + EPS) {
-    return [{
+  if (now.bestSetVol > old.bestSetVol + EPS) {
+    prs.push({
       exId: exId,
       kind: "Best Set Volume",
       val: now.bestSetVol,
       isReps: false
-    }];
+    });
   }
-  return [];
+  return prs;
+}
+
+// Detailed Exercise-by-Exercise Comparison vs Previous Session (For Result Summary)
+function getExerciseComparisonVsLast(exId, currentSets, workoutId) {
+  const p1Current = (currentSets || []).filter(s => s.type !== "W" && s.lifter !== "p2");
+  const prevSets = getPrevious(exId, workoutId).filter(s => s.type !== "W" && s.lifter !== "p2");
+  const curSt = getStats(p1Current);
+  const prevSt = getStats(prevSets);
+  const type = exTypeOf(exId);
+  const unit = unitName().toUpperCase();
+
+  if (prevSets.length === 0) {
+    return {
+      hasPrev: false,
+      badgeText: "FIRST LOGGED SESSION",
+      isPositive: true
+    };
+  }
+
+  if (type === "reps" || type === "time") {
+    const diff = curSt.maxReps - prevSt.maxReps;
+    const suffix = type === "time" ? "s" : " reps";
+    if (diff > 0) return { hasPrev: true, badgeText: "▲ +" + diff + suffix + " vs last (" + prevSt.maxReps + suffix + ")", isPositive: true };
+    if (diff === 0) return { hasPrev: true, badgeText: "= Matched last best (" + curSt.maxReps + suffix + ")", isPositive: true };
+    return { hasPrev: true, badgeText: "Last best: " + prevSt.maxReps + suffix, isPositive: false };
+  }
+
+  const wtDiff = showWeight(curSt.maxWeight) - showWeight(prevSt.maxWeight);
+  const volDiff = Math.round(showWeight(curSt.totalVol) - showWeight(prevSt.totalVol));
+  const parts = [];
+
+  if (wtDiff > 0) parts.push("▲ +" + Math.round(wtDiff * 10) / 10 + " " + unit + " Top Wt");
+  else if (wtDiff === 0) parts.push("= Same Top Wt (" + showWeight(curSt.maxWeight) + " " + unit + ")");
+
+  if (volDiff > 0) parts.push("▲ +" + volDiff + " " + unit + " Vol");
+  else if (volDiff < 0 && wtDiff <= 0) parts.push("Last Top: " + showWeight(prevSt.maxWeight) + " " + unit);
+
+  return {
+    hasPrev: true,
+    badgeText: parts.join("  ·  ") || ("Last Top: " + showWeight(prevSt.maxWeight) + " " + unit),
+    isPositive: (wtDiff >= 0 || volDiff >= 0)
+  };
 }
 
 function formatPRValue(pr) {
@@ -619,24 +851,83 @@ function formatPRValue(pr) {
   return pr.text || "";
 }
 
-function workoutVolume(w) {
+function workoutVolume(w, includePartner) {
   let total = 0;
   (w.exercises || []).forEach(function (ex) {
     if (exTypeOf(ex.exId) !== "weight") return;
     (ex.sets || []).forEach(function (s) {
-      if (s.type !== "W") total += (Number(s.kg) || 0) * (Number(s.reps) || 0);
+      if (s.type === "W") return;
+      if (!includePartner && s.lifter === "p2") return;
+      total += (Number(s.kg) || 0) * (Number(s.reps) || 0);
     });
   });
   return total;
 }
 
-// ---------- Strava × Hevy Flex Insights (Top MVP Lift + Volume Delta) ----------
+function getWorkoutDuoStats(w) {
+  if (!w || !w.partnerName) return null;
+  const p1Name = (getAthleteProfile().name || "YOU").toUpperCase();
+  const p2Name = String(w.partnerName).trim().toUpperCase();
+  const unit = unitName().toUpperCase();
+
+  let p1Vol = 0, p1Sets = 0, p1Top1rm = 0, p1TopLift = "";
+  let p2Vol = 0, p2Sets = 0, p2Top1rm = 0, p2TopLift = "";
+
+  (w.exercises || []).forEach(function (ex) {
+    const isWeighted = exTypeOf(ex.exId) === "weight";
+    const name = exName(ex.exId);
+
+    (ex.sets || []).forEach(function (s) {
+      if (s.type === "W") return;
+      const kg = Number(s.kg) || 0;
+      const reps = Number(s.reps) || 0;
+      const vol = isWeighted ? (kg * reps) : 0;
+      const est = isWeighted ? e1rm(kg, reps) : reps;
+
+      if (s.lifter === "p2") {
+        p2Sets++;
+        p2Vol += vol;
+        if (est > p2Top1rm) {
+          p2Top1rm = est;
+          p2TopLift = isWeighted ? (name + " (" + showWeight(kg) + " " + unit + " x " + reps + ")") : (name + " (" + reps + ")");
+        }
+      } else {
+        p1Sets++;
+        p1Vol += vol;
+        if (est > p1Top1rm) {
+          p1Top1rm = est;
+          p1TopLift = isWeighted ? (name + " (" + showWeight(kg) + " " + unit + " x " + reps + ")") : (name + " (" + reps + ")");
+        }
+      }
+    });
+  });
+
+  if (p2Sets === 0) return null;
+
+  let winner = "TIE SESSION";
+  if (p1Vol > p2Vol) winner = p1Name + " LEADS VOLUME";
+  else if (p2Vol > p1Vol) winner = p2Name + " LEADS VOLUME";
+  else if (p1Sets > p2Sets) winner = p1Name + " LEADS SETS";
+  else if (p2Sets > p1Sets) winner = p2Name + " LEADS SETS";
+
+  return {
+    p1Name: p1Name,
+    p1Vol: p1Vol,
+    p1Sets: p1Sets,
+    p1TopLift: p1TopLift || "—",
+    p2Name: p2Name,
+    p2Vol: p2Vol,
+    p2Sets: p2Sets,
+    p2TopLift: p2TopLift || "—",
+    winner: winner
+  };
+}
+
 function getWorkoutFlexInsights(w) {
   const unit = unitName().toUpperCase();
   const curVol = workoutVolume(w);
   const hist = getHistory().filter(item => item.id !== w.id);
 
-  // Compare against previous workout with volume > 0
   let prevVol = 0;
   for (let i = hist.length - 1; i >= 0; i--) {
     const v = workoutVolume(hist[i]);
@@ -646,7 +937,7 @@ function getWorkoutFlexInsights(w) {
     }
   }
 
-  let deltaText = "FIRST LOGGED SESSION 🔥";
+  let deltaText = "BASELINE SESSION";
   let deltaPositive = true;
   if (prevVol > 0 && curVol > 0) {
     const diffKg = curVol - prevVol;
@@ -655,26 +946,25 @@ function getWorkoutFlexInsights(w) {
       deltaText = "▲ +" + showWeight(diffKg) + " " + unit + " (+" + pct + "% VS LAST)";
       deltaPositive = true;
     } else {
-      deltaText = "▼ " + showWeight(Math.abs(diffKg)) + " " + unit + " (" + pct + "% VS LAST)";
+      deltaText = "▼ -" + showWeight(Math.abs(diffKg)) + " " + unit + " (" + pct + "% VS LAST)";
       deltaPositive = false;
     }
   }
 
-  // Find MVP (Best Lift of the Workout)
   let mvp = null;
   let bestScore = -1;
   (w.exercises || []).forEach(function (ex) {
     const type = exTypeOf(ex.exId);
-    const st = getStats(ex.sets);
-    const workingCount = (ex.sets || []).filter(s => s.type !== "W").length;
+    const p1Sets = (ex.sets || []).filter(s => s.lifter !== "p2");
+    const st = getStats(p1Sets);
+    const workingCount = p1Sets.filter(s => s.type !== "W").length;
     if (workingCount === 0) return;
 
     const score = type === "weight" ? st.best1rm : st.maxReps;
     if (score > bestScore) {
       bestScore = score;
-      // Find top set reps at maxWeight
       let topRepsAtMax = st.maxReps;
-      (ex.sets || []).forEach(s => {
+      p1Sets.forEach(s => {
         if (s.type !== "W" && Number(s.kg) === st.maxWeight) {
           topRepsAtMax = Math.max(topRepsAtMax, Number(s.reps) || 0);
         }
@@ -688,7 +978,7 @@ function getWorkoutFlexInsights(w) {
         setsCount: workingCount,
         topSetText: type === "time"
           ? (st.maxReps + " SEC HOLD")
-          : (type === "reps" ? (st.maxReps + " REPS") : (showWeight(st.maxWeight) + " " + unit + " × " + topRepsAtMax)),
+          : (type === "reps" ? (st.maxReps + " REPS") : (showWeight(st.maxWeight) + " " + unit + " x " + topRepsAtMax)),
         est1rmText: type === "weight" ? (showWeight(st.best1rm) + " " + unit) : "BODYWEIGHT",
         volumeText: type === "weight" ? (showWeight(st.totalVol) + " " + unit) : (workingCount + " SETS")
       };
@@ -698,103 +988,9 @@ function getWorkoutFlexInsights(w) {
   return {
     deltaText: deltaText,
     deltaPositive: deltaPositive,
-    mvp: mvp
+    mvp: mvp,
+    xpEarned: calculateWorkoutXP(w)
   };
-}
-
-// ---------- Unlockable Lifetime Achievements Engine ----------
-function getAchievements() {
-  const hist = getHistory();
-  const totalWorkouts = hist.length;
-  let lifetimeVolKg = 0;
-  let totalPrs = 0;
-  const weeks = {};
-
-  hist.forEach(function (w) {
-    lifetimeVolKg += workoutVolume(w);
-    totalPrs += (w.prs || []).length;
-    const d = workoutDate(w);
-    if (d) weeks[weekStart(d)] = true;
-  });
-
-  const nowWeek = weekStart(new Date());
-  let streak = 0;
-  let t = nowWeek;
-  if (!weeks[t]) t = prevWeek(t);
-  while (weeks[t]) {
-    streak++;
-    t = prevWeek(t);
-  }
-
-  const unit = unitName().toUpperCase();
-  const shownVol = Math.round(showWeight(lifetimeVolKg));
-
-  return [
-    {
-      id: "ach_first",
-      icon: "🔥",
-      title: "FIRST BLOOD",
-      desc: "Complete your 1st workout session",
-      unlocked: totalWorkouts >= 1,
-      progress: Math.min(totalWorkouts, 1) + " / 1"
-    },
-    {
-      id: "ach_regular",
-      icon: "⚡",
-      title: "IRON REGULAR",
-      desc: "Log 5 completed workout sessions",
-      unlocked: totalWorkouts >= 5,
-      progress: Math.min(totalWorkouts, 5) + " / 5"
-    },
-    {
-      id: "ach_dedicated",
-      icon: "🛡️",
-      title: "DEDICATED LIFTER",
-      desc: "Log 25 completed workout sessions",
-      unlocked: totalWorkouts >= 25,
-      progress: Math.min(totalWorkouts, 25) + " / 25"
-    },
-    {
-      id: "ach_10ton",
-      icon: "🏋️",
-      title: "10-TON CLUB",
-      desc: "Lift 10,000 KG total lifetime volume",
-      unlocked: lifetimeVolKg >= 10000,
-      progress: shownVol.toLocaleString() + " / " + showWeight(10000).toLocaleString() + " " + unit
-    },
-    {
-      id: "ach_50ton",
-      icon: "🦾",
-      title: "50-TON TITAN",
-      desc: "Lift 50,000 KG total lifetime volume",
-      unlocked: lifetimeVolKg >= 50000,
-      progress: shownVol.toLocaleString() + " / " + showWeight(50000).toLocaleString() + " " + unit
-    },
-    {
-      id: "ach_100ton",
-      icon: "👑",
-      title: "100-TON APEX",
-      desc: "Lift 100,000 KG total lifetime volume",
-      unlocked: lifetimeVolKg >= 100000,
-      progress: shownVol.toLocaleString() + " / " + showWeight(100000).toLocaleString() + " " + unit
-    },
-    {
-      id: "ach_prs",
-      icon: "🏆",
-      title: "RECORD BREAKER",
-      desc: "Break 5 Personal Records (PRs)",
-      unlocked: totalPrs >= 5,
-      progress: Math.min(totalPrs, 5) + " / 5 PRs"
-    },
-    {
-      id: "ach_streak",
-      icon: "💎",
-      title: "STREAK MASTER",
-      desc: "Maintain a 3-Week training streak",
-      unlocked: streak >= 3,
-      progress: Math.min(streak, 3) + " / 3 Weeks"
-    }
-  ];
 }
 
 function calculateMuscleWorkload(workouts) {
@@ -804,7 +1000,7 @@ function calculateMuscleWorkload(workouts) {
       const primary = exPrimaryMuscleOf(ex.exId);
       const secondaries = exSecondaryMusclesOf(ex.exId);
       (ex.sets || []).forEach(function (s) {
-        if (s.type === "W") return;
+        if (s.type === "W" || s.lifter === "p2") return;
         if (primary && primary !== "Other") {
           if (!workload[primary]) workload[primary] = { direct: 0, indirect: 0, total: 0 };
           workload[primary].direct += 1;
@@ -846,7 +1042,7 @@ function calculateMuscleRecovery() {
     (w.exercises || []).forEach(function (ex) {
       const primary = exPrimaryMuscleOf(ex.exId);
       const secondaries = exSecondaryMusclesOf(ex.exId);
-      const workingSets = (ex.sets || []).filter(s => s.type !== "W").length;
+      const workingSets = (ex.sets || []).filter(s => s.type !== "W" && s.lifter !== "p2").length;
       if (workingSets <= 0) return;
 
       if (primary && fatigueScore[primary] !== undefined) {
@@ -875,7 +1071,7 @@ function calculateMuscleRecovery() {
     const rawFatigue = Math.min(95, Math.round(fatigueScore[m]));
     const recoveryPct = Math.max(5, 100 - rawFatigue);
     let status = "Fresh";
-    if (recoveryPct < 55) status = "Rest Needed";
+    if (recoveryPct < 55) status = "Heavy Load";
     else if (recoveryPct < 85) status = "Recovering";
     return {
       muscle: m,
@@ -886,50 +1082,79 @@ function calculateMuscleRecovery() {
   }).sort((a, b) => a.pct - b.pct);
 }
 
-// ---------- Hevy & Strong CSV Importer Engine ----------
+// ---------- Hardened Hevy & Strong CSV Importer (With Chronological PR Calculation!) ----------
 function parseCsvRows(text) {
-  const lines = String(text || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
-  if (lines.length < 2) return [];
+  const src = String(text || "");
+  if (!src.trim()) return [];
 
-  const headerLine = lines[0];
-  const delim = (headerLine.split(";").length > headerLine.split(",").length) ? ";" : ",";
+  const firstBreak = src.indexOf("\n");
+  const sample = firstBreak === -1 ? src : src.slice(0, firstBreak);
+  const delim = (sample.split(";").length > sample.split(",").length) ? ";" : ",";
 
-  function splitLine(line) {
-    const out = [];
-    let cur = "";
-    let inQuotes = false;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (ch === '"') {
-        if (inQuotes && line[i + 1] === '"') {
-          cur += '"';
-          i++;
-        } else {
-          inQuotes = !inQuotes;
-        }
-      } else if (ch === delim && !inQuotes) {
-        out.push(cur.trim());
-        cur = "";
+  const matrix = [];
+  let row = [];
+  let cell = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (inQuotes) {
+      if (ch === '"' && src[i + 1] === '"') {
+        cell += '"';
+        i++;
+      } else if (ch === '"') {
+        inQuotes = false;
       } else {
-        cur += ch;
+        cell += ch;
+      }
+    } else {
+      if (ch === '"') {
+        inQuotes = true;
+      } else if (ch === delim) {
+        row.push(cell.trim());
+        cell = "";
+      } else if (ch === "\r" && src[i + 1] === "\n") {
+        row.push(cell.trim());
+        if (row.some(v => v !== "")) matrix.push(row);
+        row = [];
+        cell = "";
+        i++;
+      } else if (ch === "\n" || ch === "\r") {
+        row.push(cell.trim());
+        if (row.some(v => v !== "")) matrix.push(row);
+        row = [];
+        cell = "";
+      } else {
+        cell += ch;
       }
     }
-    out.push(cur.trim());
-    return out;
   }
+  row.push(cell.trim());
+  if (row.some(v => v !== "")) matrix.push(row);
+  if (matrix.length < 2) return [];
 
-  const headers = splitLine(lines[0]).map(h => h.toLowerCase().replace(/^"|"$/g, "").trim());
+  const headers = matrix[0].map(h => h.toLowerCase().trim());
   const rows = [];
-  for (let i = 1; i < lines.length; i++) {
-    if (!lines[i].trim()) continue;
-    const vals = splitLine(lines[i]);
+  for (let r = 1; r < matrix.length; r++) {
+    const vals = matrix[r];
     const obj = {};
     headers.forEach((h, idx) => {
-      obj[h] = vals[idx] !== undefined ? vals[idx].replace(/^"|"$/g, "").trim() : "";
+      obj[h] = vals[idx] !== undefined ? vals[idx] : "";
     });
     rows.push(obj);
   }
   return rows;
+}
+
+function normalizeExNameForMatch(name) {
+  return String(name || "")
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .sort()
+    .join(" ");
 }
 
 function importWorkoutsFromCsv(csvText) {
@@ -941,19 +1166,31 @@ function importWorkoutsFromCsv(csvText) {
   const allExercises = getExercises();
   let exercisesModified = false;
 
-  function matchOrCreateExercise(rawName) {
+  function matchOrCreateExercise(rawName, isTimedHint) {
     const clean = String(rawName || "Unknown Exercise").trim();
     const lower = clean.toLowerCase();
     let found = allExercises.find(e => e.name.toLowerCase() === lower);
+
     if (!found) {
-      found = allExercises.find(e => e.name.toLowerCase().includes(lower) || lower.includes(e.name.toLowerCase()));
+      const norm = normalizeExNameForMatch(clean);
+      if (norm.length >= 4) {
+        found = allExercises.find(e => normalizeExNameForMatch(e.name) === norm);
+      }
     }
+
     if (!found) {
+      let guessedEquip = "Barbell";
+      if (lower.includes("dumbbell") || lower.includes("db")) guessedEquip = "Dumbbell";
+      else if (lower.includes("cable")) guessedEquip = "Cable";
+      else if (lower.includes("machine")) guessedEquip = "Machine";
+      else if (lower.includes("smith")) guessedEquip = "Smith Machine";
+      else if (lower.includes("bodyweight") || lower.includes("push-up") || lower.includes("pull-up") || lower.includes("plank")) guessedEquip = "Bodyweight";
+
       found = {
         id: newId(),
         name: clean.slice(0, 100),
-        type: "weight",
-        equipment: "Barbell",
+        type: isTimedHint ? "time" : "weight",
+        equipment: guessedEquip,
         primary: "Other",
         secondary: []
       };
@@ -968,20 +1205,31 @@ function importWorkoutsFromCsv(csvText) {
   rows.forEach(function (r) {
     const title = r["title"] || r["workout name"] || r["workout_name"] || "Imported Workout";
     const dateRaw = r["start_time"] || r["date"] || r["workout_date"] || "";
+    const endRaw = r["end_time"] || "";
     const exTitle = r["exercise_title"] || r["exercise name"] || r["exercise"] || "";
     if (!exTitle) return;
 
     const sessionKey = dateRaw + "__" + title;
     if (!sessionMap.has(sessionKey)) {
-      const parsedDate = Date.parse(dateRaw);
-      const ts = Number.isFinite(parsedDate) ? parsedDate : Date.now();
+      const parsedStart = Date.parse(dateRaw);
+      const ts = Number.isFinite(parsedStart) ? parsedStart : Date.now();
+      let durationMs = 45 * 60000;
+      if (endRaw) {
+        const parsedEnd = Date.parse(endRaw);
+        if (Number.isFinite(parsedEnd) && parsedEnd > ts) {
+          durationMs = Math.min(parsedEnd - ts, 5 * 3600000);
+        }
+      } else if (r["duration"] && Number(r["duration"]) > 0) {
+        durationMs = Number(r["duration"]) * 1000;
+      }
+
       sessionMap.set(sessionKey, {
         id: newId(),
         title: title,
         notes: r["description"] || r["workout notes"] || "",
         ts: ts,
         date: new Date(ts).toLocaleString(),
-        duration: 45 * 60000,
+        duration: durationMs,
         exOrder: [],
         exGroups: {},
         prs: []
@@ -989,7 +1237,8 @@ function importWorkoutsFromCsv(csvText) {
     }
 
     const session = sessionMap.get(sessionKey);
-    const exId = matchOrCreateExercise(exTitle);
+    const hasSecondsCol = (r["duration_seconds"] && Number(r["duration_seconds"]) > 0) || (r["seconds"] && Number(r["seconds"]) > 0);
+    const exId = matchOrCreateExercise(exTitle, !!hasSecondsCol);
 
     if (!session.exGroups[exId]) {
       session.exGroups[exId] = { exId: exId, sets: [], isSuperset: false };
@@ -1030,10 +1279,26 @@ function importWorkoutsFromCsv(csvText) {
     saveExercises(allExercises);
   }
 
+  const currentHistory = getHistory();
+  const existingSignatures = new Set(currentHistory.map(function (w) {
+    const d = workoutDate(w);
+    const dayBucket = d ? (d.getFullYear() + "-" + d.getMonth() + "-" + d.getDate()) : "";
+    return dayBucket + "|" + String(w.title || "").toLowerCase() + "|" + (w.exercises || []).length;
+  }));
+
   const importedWorkouts = [];
+  let skippedDuplicates = 0;
+
   sessionMap.forEach(function (s) {
     const exercises = s.exOrder.map(id => s.exGroups[id]).filter(g => g.sets.length > 0);
     if (exercises.length > 0) {
+      const d = new Date(s.ts);
+      const sig = (d.getFullYear() + "-" + d.getMonth() + "-" + d.getDate()) + "|" + s.title.toLowerCase() + "|" + exercises.length;
+      if (existingSignatures.has(sig)) {
+        skippedDuplicates++;
+        return;
+      }
+      existingSignatures.add(sig);
       importedWorkouts.push({
         id: s.id,
         title: s.title,
@@ -1047,13 +1312,41 @@ function importWorkoutsFromCsv(csvText) {
     }
   });
 
+  if (importedWorkouts.length === 0 && skippedDuplicates > 0) {
+    return { imported: 0, skipped: skippedDuplicates };
+  }
   if (importedWorkouts.length === 0) {
     throw new Error("No valid workout sets found in CSV file.");
   }
 
-  importedWorkouts.sort((a, b) => a.ts - b.ts);
-  const currentHistory = getHistory();
+  // Merge chronologically and compute historical PRs across all workouts!
   const merged = [...currentHistory, ...importedWorkouts].sort((a, b) => (a.ts || 0) - (b.ts || 0));
+  const runningSetsByEx = {};
+  merged.forEach(function (w) {
+    const workoutPrs = [];
+    (w.exercises || []).forEach(function (ex) {
+      const priorSets = runningSetsByEx[ex.exId] || [];
+      const found = findPRs(ex.exId, ex.sets, null, priorSets);
+      found.forEach(function (pr) {
+        workoutPrs.push({
+          exId: ex.exId,
+          kind: pr.kind,
+          val: pr.val,
+          isReps: pr.isReps,
+          isTime: pr.isTime,
+          name: exName(ex.exId)
+        });
+      });
+      if (!runningSetsByEx[ex.exId]) runningSetsByEx[ex.exId] = [];
+      (ex.sets || []).forEach(s => {
+        if (s.lifter !== "p2") runningSetsByEx[ex.exId].push(s);
+      });
+    });
+    if (!w.prs || w.prs.length === 0) {
+      w.prs = workoutPrs;
+    }
+  });
+
   saveHistory(merged);
-  return importedWorkouts.length;
+  return { imported: importedWorkouts.length, skipped: skippedDuplicates };
 }

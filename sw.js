@@ -1,6 +1,6 @@
-// ============ sw.js : STRVEX OFFLINE-FIRST SERVICE WORKER ============
+// ============ sw.js : STRVEX OFFLINE-FIRST SERVICE WORKER (v4) ============
 
-const CACHE_NAME = "strvex-cache-v3";
+const CACHE_NAME = "strvex-cache-v4";
 const ASSETS = [
   "./",
   "./index.html",
@@ -39,6 +39,28 @@ self.addEventListener("activate", function (event) {
 
 self.addEventListener("fetch", function (event) {
   if (event.request.method !== "GET") return;
+
+  // Network-First for HTML navigation so users always receive new updates right away
+  if (event.request.mode === "navigate" || event.request.url.endsWith("index.html")) {
+    event.respondWith(
+      fetch(event.request)
+        .then(function (response) {
+          if (response && response.status === 200) {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then(function (cache) {
+              cache.put(event.request, copy);
+            });
+          }
+          return response;
+        })
+        .catch(function () {
+          return caches.match("./index.html");
+        })
+    );
+    return;
+  }
+
+  // Stale-While-Revalidate for JS, CSS, SVG & Manifest
   event.respondWith(
     caches.match(event.request).then(function (cached) {
       const networkFetch = fetch(event.request)
