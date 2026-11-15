@@ -1,4 +1,4 @@
-// ============ store.js : STRVEX DATA, XP/LEVELS, MULTI-PR, COMPARISON & CSV ENGINE ============
+// ============ store.js : STRVEX DATA, HEVY ALIAS MERGER, XP/LEVELS & PR ENGINE ============
 
 const MONTHS = ["January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December"];
@@ -10,7 +10,6 @@ const EQUIPMENTS = ["All", "Barbell", "Dumbbell", "Cable", "Machine", "Smith Mac
 const ACCENT_THEMES = ["flame", "cyan", "crimson", "emerald", "volt"];
 const DEFAULT_SPOTIFY_EMBED = "https://open.spotify.com/embed/playlist/37i9dQZF1DX76Wlfdnj7AP?utm_source=generator&theme=0";
 
-// Connected 10-Level RPG Athlete Progression Tiers
 const LEVEL_TIERS = [
   { level: 1, xp: 0, title: "ROOKIE", desc: "Begin your strength logbook journey" },
   { level: 2, xp: 250, title: "IRON STARTER", desc: "Complete your first 2 workouts & build baseline habits" },
@@ -23,6 +22,166 @@ const LEVEL_TIERS = [
   { level: 9, xp: 11500, title: "TITAN", desc: "Relentless intensity & elite lifetime volume" },
   { level: 10, xp: 16000, title: "STRVEX APEX", desc: "Peak strength status — top 1% dedication" }
 ];
+
+// Direct Hevy & Strong Exercise Name Alias Dictionary -> STRVEX Built-in IDs
+const HEVY_ALIAS_MAP = {
+  "bench press (barbell)": "ex_bb_bench",
+  "incline bench press (barbell)": "ex_bb_inc_bench",
+  "decline bench press (barbell)": "ex_bb_dec_bench",
+  "bench press (dumbbell)": "ex_db_bench",
+  "incline bench press (dumbbell)": "ex_db_inc_bench",
+  "decline bench press (dumbbell)": "ex_db_dec_bench",
+  "squeeze press (dumbbell)": "ex_db_squeeze_press",
+  "hex press (dumbbell)": "ex_db_squeeze_press",
+  "chest fly (dumbbell)": "ex_db_fly",
+  "incline chest fly (dumbbell)": "ex_db_inc_fly",
+  "chest fly (machine)": "ex_pec_deck",
+  "butterfly (pec deck)": "ex_pec_deck",
+  "pec deck": "ex_pec_deck",
+  "chest press (machine)": "ex_mach_chest_press",
+  "incline chest press (machine)": "ex_mach_inc_press",
+  "bench press (smith machine)": "ex_smith_bench",
+  "incline bench press (smith machine)": "ex_smith_inc_bench",
+  "cable fly crossovers": "ex_cable_crossover",
+  "cable crossover": "ex_cable_crossover",
+  "low cable fly crossovers": "ex_cable_fly_low",
+  "push up": "ex_pushups",
+  "push ups": "ex_pushups",
+  "chest dip": "ex_dips_chest",
+  "chest dip (weighted)": "ex_dips_weighted",
+  "pullover (dumbbell)": "ex_db_pullover",
+  "deadlift (barbell)": "ex_conv_deadlift",
+  "deadlift (trap bar)": "ex_trap_bar_deadlift",
+  "rack pull": "ex_rack_pull",
+  "bent over row (barbell)": "ex_bb_bent_row",
+  "pendlay row (barbell)": "ex_pendlay_row",
+  "dumbbell row": "ex_db_single_row",
+  "bent over row (dumbbell)": "ex_db_single_row",
+  "one arm dumbbell row": "ex_db_single_row",
+  "chest supported incline row (dumbbell)": "ex_db_chest_row",
+  "t bar row": "ex_tbar_row",
+  "seated row (machine)": "ex_mach_lat_row",
+  "iso-lateral row (machine)": "ex_mach_lat_row",
+  "lat pulldown (cable)": "ex_lat_pulldown_wide",
+  "lat pulldown - close grip (cable)": "ex_lat_pulldown_close",
+  "reverse grip lat pulldown (cable)": "ex_lat_pulldown_under",
+  "straight arm lat pulldown (cable)": "ex_lat_prayer",
+  "pull up": "ex_pullups",
+  "pull up (weighted)": "ex_pullups_weighted",
+  "pull up (assisted)": "ex_pullups_assisted",
+  "chin up": "ex_chinups",
+  "chin up (weighted)": "ex_chinups_weighted",
+  "seated cable row": "ex_seated_cable_row",
+  "seated cable row - bar grip": "ex_seated_cable_row",
+  "seated cable row - v-grip (cable)": "ex_seated_cable_row",
+  "shrug (barbell)": "ex_bb_shrug",
+  "shrug (dumbbell)": "ex_db_shrug",
+  "back extension": "ex_hyperextension",
+  "back extension (weighted)": "ex_hyperextension_weighted",
+  "overhead press (barbell)": "ex_bb_ohp",
+  "seated overhead press (barbell)": "ex_bb_seated_press",
+  "shoulder press (dumbbell)": "ex_db_shoulder_press",
+  "seated shoulder press (dumbbell)": "ex_db_shoulder_press",
+  "arnold press (dumbbell)": "ex_arnold_press",
+  "shoulder press (machine)": "ex_mach_ohp",
+  "overhead press (smith machine)": "ex_smith_ohp",
+  "lateral raise (dumbbell)": "ex_db_lateral_raise",
+  "lateral raise (cable)": "ex_cable_lateral_raise",
+  "lateral raise (machine)": "ex_mach_lateral_raise",
+  "front raise (dumbbell)": "ex_db_front_raise",
+  "front raise (barbell)": "ex_bb_front_raise",
+  "front raise (cable)": "ex_cable_front_raise",
+  "face pull": "ex_face_pull",
+  "face pull (cable)": "ex_face_pull",
+  "rear delt reverse fly (machine)": "ex_rev_pec_deck",
+  "rear delt reverse fly (dumbbell)": "ex_db_rear_delt_raise",
+  "rear delt reverse fly (cable)": "ex_rear_delt_cable_fly",
+  "upright row (barbell)": "ex_upright_row_bb",
+  "upright row (cable)": "ex_upright_row_cable",
+  "bicep curl (barbell)": "ex_bb_curl",
+  "ez bar biceps curl": "ex_ez_curl",
+  "bicep curl (dumbbell)": "ex_db_curl",
+  "hammer curl (dumbbell)": "ex_db_hammer_curl",
+  "hammer curl (cable)": "ex_cable_rope_hammer",
+  "incline curl (dumbbell)": "ex_db_inc_curl",
+  "preacher curl (barbell)": "ex_preacher_curl_ez",
+  "preacher curl (ez bar)": "ex_preacher_curl_ez",
+  "preacher curl (dumbbell)": "ex_preacher_curl_db",
+  "preacher curl (machine)": "ex_preacher_curl_mach",
+  "bicep curl (cable)": "ex_cable_curl_bar",
+  "concentration curl": "ex_concentration_curl",
+  "concentration curl (dumbbell)": "ex_concentration_curl",
+  "spider curl (dumbbell)": "ex_spider_curl",
+  "spider curl (barbell)": "ex_spider_curl_ez",
+  "reverse curl (barbell)": "ex_reverse_curl_bb",
+  "triceps pushdown": "ex_tricep_rope_pushdown",
+  "triceps rope pushdown": "ex_tricep_rope_pushdown",
+  "triceps pushdown (cable)": "ex_tricep_rope_pushdown",
+  "triceps extension (cable)": "ex_cable_overhead_ext",
+  "overhead triceps extension (cable)": "ex_cable_overhead_ext",
+  "triceps extension (dumbbell)": "ex_db_overhead_ext",
+  "skullcrusher (barbell)": "ex_skull_crushers_ez",
+  "skullcrusher (ez bar)": "ex_skull_crushers_ez",
+  "skullcrusher (dumbbell)": "ex_skull_crushers_db",
+  "close grip bench press (barbell)": "ex_close_grip_bench",
+  "triceps dip": "ex_dips_triceps",
+  "bench dip": "ex_bench_dips",
+  "triceps kickback (dumbbell)": "ex_kickbacks_db",
+  "triceps kickback (cable)": "ex_kickbacks_cable",
+  "wrist curl (barbell)": "ex_bb_wrist_curl",
+  "wrist curl (dumbbell)": "ex_db_wrist_curl",
+  "farmers walk": "ex_farmers_walk",
+  "squat (barbell)": "ex_bb_squat_high",
+  "front squat": "ex_bb_front_squat",
+  "front squat (barbell)": "ex_bb_front_squat",
+  "leg press": "ex_leg_press",
+  "leg press (machine)": "ex_leg_press",
+  "hack squat": "ex_hack_squat",
+  "hack squat (machine)": "ex_hack_squat",
+  "pendulum squat (machine)": "ex_pendulum_squat",
+  "bulgarian split squat": "ex_bulgarian_split_squat",
+  "lunge (dumbbell)": "ex_walking_lunges_db",
+  "walking lunge (dumbbell)": "ex_walking_lunges_db",
+  "lunge (barbell)": "ex_reverse_lunge_bb",
+  "goblet squat": "ex_goblet_squat",
+  "leg extension (machine)": "ex_leg_extension",
+  "squat (smith machine)": "ex_smith_squat",
+  "squat (bodyweight)": "ex_bodyweight_squat",
+  "romanian deadlift (barbell)": "ex_rdl_bb",
+  "romanian deadlift (dumbbell)": "ex_rdl_db",
+  "stiff leg deadlift (barbell)": "ex_stiff_deadlift",
+  "lying leg curl (machine)": "ex_lying_leg_curl",
+  "seated leg curl (machine)": "ex_seated_leg_curl",
+  "standing leg curl (machine)": "ex_standing_leg_curl",
+  "nordic hamstring eccentrics": "ex_nordic_curl",
+  "glute ham raise": "ex_glute_ham_raise",
+  "hip thrust (barbell)": "ex_hip_thrust_bb",
+  "hip thrust (dumbbell)": "ex_hip_thrust_db",
+  "hip thrust (machine)": "ex_hip_thrust_mach",
+  "glute kickback (cable)": "ex_glute_kickback_cable",
+  "hip abduction (machine)": "ex_abductor_mach",
+  "hip adduction (machine)": "ex_adductor_mach",
+  "sumo deadlift (barbell)": "ex_sumo_deadlift",
+  "standing calf raise": "ex_standing_calf_raise",
+  "standing calf raise (machine)": "ex_standing_calf_raise",
+  "Standing Calf Raise (Dumbbell)": "ex_single_db_calf",
+  "standing calf raise (barbell)": "ex_bb_calf_raise",
+  "standing calf raise (smith)": "ex_smith_calf_raise",
+  "seated calf raise": "ex_seated_calf_raise",
+  "calf press (machine)": "ex_leg_press_calf",
+  "crunch": "ex_floor_crunch",
+  "crunch (machine)": "ex_mach_crunch",
+  "cable crunch": "ex_cable_crunch",
+  "decline crunch": "ex_decline_crunch",
+  "reverse crunch": "ex_reverse_crunch",
+  "bicycle crunch": "ex_bicycle_crunch",
+  "hanging leg raise": "ex_hanging_leg_raise",
+  "hanging knee raise": "ex_hanging_knee_raise",
+  "ab wheel": "ex_ab_wheel",
+  "plank": "ex_plank",
+  "side plank": "ex_side_plank",
+  "russian twist": "ex_russian_twist"
+};
 
 // ---------- High-Speed In-Memory Cache & Safe Atomic Write ----------
 const CACHED_KEYS = new Set([
@@ -135,6 +294,135 @@ function saveSettings(s) {
 }
 function unitName() { return getSettings().unit; }
 
+// ---------- Smart Muscle & Equipment Auto-Guesser (Zero "Other" Muscles!) ----------
+function guessExerciseMetadata(rawName, isTimedHint) {
+  const lower = String(rawName || "").toLowerCase();
+  let equip = "Barbell";
+  if (lower.includes("dumbbell") || lower.includes("db")) equip = "Dumbbell";
+  else if (lower.includes("cable") || lower.includes("pulley") || lower.includes("rope")) equip = "Cable";
+  else if (lower.includes("smith")) equip = "Smith Machine";
+  else if (lower.includes("machine") || lower.includes("pec deck") || lower.includes("leg press") || lower.includes("hack")) equip = "Machine";
+  else if (lower.includes("bodyweight") || lower.includes("push-up") || lower.includes("push up") || lower.includes("pull-up") || lower.includes("pull up") || lower.includes("chin-up") || lower.includes("plank") || lower.includes("crunch") || lower.includes("dip")) equip = "Bodyweight";
+
+  let primary = "Other";
+  let secondary = [];
+
+  if (lower.includes("bench") || lower.includes("chest") || lower.includes("pec") || lower.includes("fly") || lower.includes("push-up") || lower.includes("push up") || lower.includes("squeeze") || lower.includes("crossover")) {
+    primary = "Chest";
+    secondary = lower.includes("fly") || lower.includes("pec") ? ["Shoulders"] : ["Triceps", "Shoulders"];
+  } else if (lower.includes("lat ") || lower.includes("pulldown") || lower.includes("pull-up") || lower.includes("pull up") || lower.includes("chin") || lower.includes("row") || lower.includes("deadlift") && !lower.includes("romanian") && !lower.includes("stiff") && !lower.includes("sumo") || lower.includes("shrug") || lower.includes("back extension") || lower.includes("hyperextension")) {
+    primary = "Back";
+    secondary = ["Biceps", "Forearms"];
+  } else if (lower.includes("shoulder") || lower.includes("overhead press") || lower.includes("military") || lower.includes("arnold") || lower.includes("lateral") || lower.includes("front raise") || lower.includes("rear delt") || lower.includes("face pull") || lower.includes("upright row") || lower.includes("reverse fly")) {
+    primary = "Shoulders";
+    secondary = lower.includes("press") ? ["Triceps"] : ["Back"];
+  } else if (lower.includes("bicep") || (lower.includes("curl") && !lower.includes("leg") && !lower.includes("hamstring") && !lower.includes("wrist") && !lower.includes("nordic")) || lower.includes("preacher") || lower.includes("spider")) {
+    primary = "Biceps";
+    secondary = ["Forearms"];
+  } else if (lower.includes("tricep") || lower.includes("pushdown") || lower.includes("skull") || lower.includes("kickback") || lower.includes("jm press") || lower.includes("close grip") || lower.includes("close-grip") || lower.includes("dip")) {
+    primary = "Triceps";
+    secondary = ["Chest", "Shoulders"];
+  } else if (lower.includes("romanian") || lower.includes("rdl") || lower.includes("stiff") || lower.includes("leg curl") || lower.includes("hamstring") || lower.includes("nordic") || lower.includes("glute ham")) {
+    primary = "Hamstrings";
+    secondary = ["Glutes"];
+  } else if (lower.includes("hip thrust") || lower.includes("glute") || lower.includes("abduct") || lower.includes("adduct") || lower.includes("sumo") || lower.includes("pull-through") || lower.includes("frog")) {
+    primary = "Glutes";
+    secondary = ["Hamstrings"];
+  } else if (lower.includes("squat") || lower.includes("leg press") || lower.includes("lunge") || lower.includes("leg extension") || lower.includes("step-up") || lower.includes("step up") || lower.includes("wall sit")) {
+    primary = "Quads";
+    secondary = ["Glutes"];
+  } else if (lower.includes("calf") || lower.includes("calves") || lower.includes("tibialis") || lower.includes("donkey")) {
+    primary = "Calves";
+    secondary = [];
+  } else if (lower.includes("crunch") || lower.includes("plank") || lower.includes("ab ") || lower.includes("abs") || lower.includes("leg raise") || lower.includes("knee raise") || lower.includes("twist") || lower.includes("woodchop") || lower.includes("pallof") || lower.includes("rollout") || lower.includes("vacuum") || lower.includes("deadbug")) {
+    primary = "Core";
+    secondary = [];
+  } else if (lower.includes("wrist") || lower.includes("forearm") || lower.includes("farmer") || lower.includes("hang") || lower.includes("pinch")) {
+    primary = "Forearms";
+    secondary = [];
+  }
+
+  let type = "weight";
+  if (isTimedHint || lower.includes("plank") || lower.includes("hang") || lower.includes("wall sit") || lower.includes("vacuum") || lower.includes("hold")) {
+    type = "time";
+  } else if (equip === "Bodyweight" && !lower.includes("weighted")) {
+    type = "reps";
+  }
+
+  return { equipment: equip, primary: primary, secondary: secondary, type: type };
+}
+
+function normalizeExNameForMatch(name) {
+  return String(name || "")
+    .toLowerCase()
+    .replace(/\bdb\b/g, "dumbbell")
+    .replace(/\bbb\b/g, "barbell")
+    .replace(/\binc\b/g, "incline")
+    .replace(/\bdec\b/g, "decline")
+    .replace(/\bext\b/g, "extension")
+    .replace(/\bbiceps\b/g, "bicep")
+    .replace(/\btriceps\b/g, "tricep")
+    .replace(/\bcrunches\b/g, "crunch")
+    .replace(/\blunges\b/g, "lunge")
+    .replace(/\bsquats\b/g, "squat")
+    .replace(/\bpull-ups\b|\bpull ups\b|\bpullup\b/g, "pullups")
+    .replace(/\bpush-ups\b|\bpush ups\b|\bpushup\b/g, "pushups")
+    .replace(/\bchin-ups\b|\bchin ups\b|\bchinup\b/g, "chinups")
+    .replace(/\bdips\b/g, "dip")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(w => !["the", "with", "on", "to", "from", "and", "standard", "conventional", "standing", "flat"].includes(w))
+    .sort()
+    .join(" ");
+}
+
+function findMatchingBuiltinExercise(rawName, exercisePool) {
+  const clean = String(rawName || "").trim();
+  const lower = clean.toLowerCase();
+  const pool = exercisePool || (typeof DEFAULT_EXERCISES !== "undefined" ? DEFAULT_EXERCISES : getExercises());
+
+  // 1. Direct Hevy/Strong Alias Dictionary Check
+  if (HEVY_ALIAS_MAP[lower]) {
+    const aliasHit = pool.find(e => e.id === HEVY_ALIAS_MAP[lower]);
+    if (aliasHit) return aliasHit;
+  }
+
+  // 2. Exact Case-Insensitive Name Match
+  let exact = pool.find(e => e.name.toLowerCase() === lower);
+  if (exact) return exact;
+
+  // 3. Token-Normalized Match (e.g., "Incline Bench Press (Dumbbell)" == "Incline Dumbbell Press")
+  const norm = normalizeExNameForMatch(clean);
+  if (norm.length >= 4) {
+    let normHit = pool.find(e => normalizeExNameForMatch(e.name) === norm);
+    if (normHit) return normHit;
+
+    // 4. Subset Token Match (All tokens of Hevy name exist in Built-in name with same equipment)
+    const tokens = norm.split(" ").filter(Boolean);
+    if (tokens.length >= 2) {
+      let bestCandidate = null;
+      let bestScore = 0;
+      pool.forEach(function (candidate) {
+        if (!String(candidate.id).startsWith("ex_")) return;
+        const candNorm = normalizeExNameForMatch(candidate.name);
+        const candTokens = new Set(candNorm.split(" ").filter(Boolean));
+        const allPresent = tokens.every(t => candTokens.has(t));
+        if (allPresent) {
+          const score = tokens.length / candTokens.size;
+          if (score > bestScore) {
+            bestScore = score;
+            bestCandidate = candidate;
+          }
+        }
+      });
+      if (bestCandidate && bestScore >= 0.5) return bestCandidate;
+    }
+  }
+
+  return null;
+}
+
 // ---------- Connected XP & Level Roadmap Engine ----------
 function calculateWorkoutXP(w) {
   if (!w) return 0;
@@ -239,15 +527,13 @@ function saveExerciseRest(exId, seconds) {
   saveExerciseMetaMap(m);
 }
 
-// ---------- Estimated Workout Time Target Calculator ----------
 function estimateWorkoutMinutes(exercisesList) {
   if (!Array.isArray(exercisesList) || exercisesList.length === 0) return 0;
-  let totalSec = 120; // 2 min initial warm-up/setup
+  let totalSec = 120;
   exercisesList.forEach(function (item) {
     const exId = item.exId;
     const setsCount = Math.max(1, Number(item.sets) || 3);
     const restSec = getExerciseRest(exId);
-    // ~40s active work per set + rest between sets + 75s equipment transition
     totalSec += (setsCount * 40) + (setsCount * restSec) + 75;
   });
   return Math.max(10, Math.round(totalSec / 60 / 5) * 5);
@@ -262,6 +548,84 @@ function markCuratedRoutineDeleted(id) {
     list.push(id);
     write("deleted_curated_routines", list);
   }
+}
+
+// ---------- Auto-Heal & Duplicate Merger (Fixes Previously Imported Hevy Duplicates!) ----------
+function deduplicateAndHealExercises(storedExercises) {
+  if (!Array.isArray(storedExercises) || typeof DEFAULT_EXERCISES === "undefined") return storedExercises;
+  const builtins = DEFAULT_EXERCISES;
+  const remapIds = {};
+  let hasRemap = false;
+  let exercisesChanged = false;
+
+  const keptExercises = [];
+  storedExercises.forEach(function (ex) {
+    if (!ex || !ex.id) return;
+    if (String(ex.id).startsWith("ex_")) {
+      keptExercises.push(ex);
+      return;
+    }
+
+    // Check if this custom exercise is actually a duplicate of a built-in exercise!
+    const matchedBuiltin = findMatchingBuiltinExercise(ex.name, builtins);
+    if (matchedBuiltin && matchedBuiltin.id !== ex.id) {
+      remapIds[ex.id] = matchedBuiltin.id;
+      hasRemap = true;
+      exercisesChanged = true;
+      return; // Drop the duplicate custom entry!
+    }
+
+    // If it's a genuine custom exercise but has "Other" muscle, auto-tag its muscles!
+    if (!ex.primary || ex.primary === "Other") {
+      const guessed = guessExerciseMetadata(ex.name, ex.type === "time");
+      if (guessed.primary !== "Other") {
+        ex.primary = guessed.primary;
+        ex.secondary = guessed.secondary;
+        ex.equipment = ex.equipment || guessed.equipment;
+        exercisesChanged = true;
+      }
+    }
+    keptExercises.push(ex);
+  });
+
+  if (hasRemap) {
+    const hist = getHistory();
+    let histChanged = false;
+    hist.forEach(function (w) {
+      (w.exercises || []).forEach(function (e) {
+        if (remapIds[e.exId]) {
+          e.exId = remapIds[e.exId];
+          histChanged = true;
+        }
+      });
+      (w.prs || []).forEach(function (p) {
+        if (remapIds[p.exId]) {
+          p.exId = remapIds[p.exId];
+          const b = builtins.find(x => x.id === p.exId);
+          if (b) p.name = b.name;
+          histChanged = true;
+        }
+      });
+    });
+    if (histChanged) saveHistory(hist);
+
+    const routines = getRoutines();
+    let routinesChanged = false;
+    routines.forEach(function (r) {
+      (r.exercises || []).forEach(function (e) {
+        if (remapIds[e.exId]) {
+          e.exId = remapIds[e.exId];
+          routinesChanged = true;
+        }
+      });
+    });
+    if (routinesChanged) saveRoutines(routines);
+  }
+
+  if (exercisesChanged) {
+    saveExercises(keptExercises);
+  }
+  return keptExercises;
 }
 
 // ---------- Exercise Database & Curated Routines Seeding ----------
@@ -289,9 +653,9 @@ function initializeDatabase() {
     });
     if (hasChanges) {
       saveExercises(storedExercises);
-    } else {
-      rebuildExerciseMap(storedExercises);
     }
+    storedExercises = deduplicateAndHealExercises(storedExercises);
+    rebuildExerciseMap(storedExercises);
   }
 
   let storedRoutines = getRoutines();
@@ -336,16 +700,16 @@ function convertV1(history, routines, muscles) {
   const exercises = typeof DEFAULT_EXERCISES !== "undefined" ? [...DEFAULT_EXERCISES] : [];
 
   function idFor(name, type) {
-    const key = String(name || "Exercise").toLowerCase();
-    let ex = exercises.find(e => e.name.toLowerCase() === key);
+    let ex = findMatchingBuiltinExercise(name, exercises);
     if (!ex) {
+      const guessed = guessExerciseMetadata(name, type === "time");
       ex = {
         id: newId(),
         name: String(name || "Exercise"),
-        type: (type === "reps" || type === "time") ? type : "weight",
-        equipment: "Machine",
-        primary: (muscles || {})[key] || "Other",
-        secondary: []
+        type: (type === "reps" || type === "time") ? type : guessed.type,
+        equipment: guessed.equipment,
+        primary: (muscles || {})[String(name).toLowerCase()] || guessed.primary,
+        secondary: guessed.secondary
       };
       exercises.push(ex);
     }
@@ -578,7 +942,7 @@ function fmtShort(d) {
   return d.getDate() + " " + MONTHS_SHORT[d.getMonth()];
 }
 
-// ---------- Strength Stats, Hevy-Style Set-by-Set Live PRs & Session PRs ----------
+// ---------- Strength Stats, Live PRs & Session PRs ----------
 function e1rm(kg, reps) {
   if (reps <= 0 || kg <= 0) return 0;
   if (reps === 1) return kg;
@@ -669,7 +1033,6 @@ function detectPlateau(exId, excludeWorkoutId) {
   return (s0.best1rm > 0 && s0.best1rm <= s1.best1rm + 0.1 && s1.best1rm <= s2.best1rm + 0.1);
 }
 
-// Hevy-Style Live Set-Level PR Evaluator (Checks Weight, 1RM, Set Volume & Reps without dropping any!)
 function evaluateSetLivePRs(exId, setKg, repsVal, runningBest) {
   const EPS = 0.05;
   const type = exTypeOf(exId);
@@ -721,7 +1084,6 @@ function evaluateSetLivePRs(exId, setKg, repsVal, runningBest) {
   return broken;
 }
 
-// Hevy-Style Complete Session PR Finder (Evaluates all 3 categories: Weight, 1RM, Set Volume!)
 function findPRs(exId, newSets, excludeWorkoutId, priorSetsOverride) {
   const EPS = 0.05;
   const oldSets = priorSetsOverride !== undefined ? priorSetsOverride : getAllSets(exId, excludeWorkoutId);
@@ -800,7 +1162,6 @@ function findPRs(exId, newSets, excludeWorkoutId, priorSetsOverride) {
   return prs;
 }
 
-// Detailed Exercise-by-Exercise Comparison vs Previous Session (For Result Summary)
 function getExerciseComparisonVsLast(exId, currentSets, workoutId) {
   const p1Current = (currentSets || []).filter(s => s.type !== "W" && s.lifter !== "p2");
   const prevSets = getPrevious(exId, workoutId).filter(s => s.type !== "W" && s.lifter !== "p2");
@@ -1082,7 +1443,7 @@ function calculateMuscleRecovery() {
   }).sort((a, b) => a.pct - b.pct);
 }
 
-// ---------- Hardened Hevy & Strong CSV Importer (With Chronological PR Calculation!) ----------
+// ---------- Hardened Hevy & Strong CSV Importer ----------
 function parseCsvRows(text) {
   const src = String(text || "");
   if (!src.trim()) return [];
@@ -1146,17 +1507,6 @@ function parseCsvRows(text) {
   return rows;
 }
 
-function normalizeExNameForMatch(name) {
-  return String(name || "")
-    .toLowerCase()
-    .replace(/\([^)]*\)/g, " ")
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim()
-    .split(/\s+/)
-    .sort()
-    .join(" ");
-}
-
 function importWorkoutsFromCsv(csvText) {
   const rows = parseCsvRows(csvText);
   if (rows.length === 0) {
@@ -1168,36 +1518,21 @@ function importWorkoutsFromCsv(csvText) {
 
   function matchOrCreateExercise(rawName, isTimedHint) {
     const clean = String(rawName || "Unknown Exercise").trim();
-    const lower = clean.toLowerCase();
-    let found = allExercises.find(e => e.name.toLowerCase() === lower);
+    const matched = findMatchingBuiltinExercise(clean, allExercises);
+    if (matched) return matched.id;
 
-    if (!found) {
-      const norm = normalizeExNameForMatch(clean);
-      if (norm.length >= 4) {
-        found = allExercises.find(e => normalizeExNameForMatch(e.name) === norm);
-      }
-    }
-
-    if (!found) {
-      let guessedEquip = "Barbell";
-      if (lower.includes("dumbbell") || lower.includes("db")) guessedEquip = "Dumbbell";
-      else if (lower.includes("cable")) guessedEquip = "Cable";
-      else if (lower.includes("machine")) guessedEquip = "Machine";
-      else if (lower.includes("smith")) guessedEquip = "Smith Machine";
-      else if (lower.includes("bodyweight") || lower.includes("push-up") || lower.includes("pull-up") || lower.includes("plank")) guessedEquip = "Bodyweight";
-
-      found = {
-        id: newId(),
-        name: clean.slice(0, 100),
-        type: isTimedHint ? "time" : "weight",
-        equipment: guessedEquip,
-        primary: "Other",
-        secondary: []
-      };
-      allExercises.push(found);
-      exercisesModified = true;
-    }
-    return found.id;
+    const guessed = guessExerciseMetadata(clean, isTimedHint);
+    const created = {
+      id: newId(),
+      name: clean.slice(0, 100),
+      type: guessed.type,
+      equipment: guessed.equipment,
+      primary: guessed.primary,
+      secondary: guessed.secondary
+    };
+    allExercises.push(created);
+    exercisesModified = true;
+    return created.id;
   }
 
   const sessionMap = new Map();
@@ -1319,7 +1654,6 @@ function importWorkoutsFromCsv(csvText) {
     throw new Error("No valid workout sets found in CSV file.");
   }
 
-  // Merge chronologically and compute historical PRs across all workouts!
   const merged = [...currentHistory, ...importedWorkouts].sort((a, b) => (a.ts || 0) - (b.ts || 0));
   const runningSetsByEx = {};
   merged.forEach(function (w) {

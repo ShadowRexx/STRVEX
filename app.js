@@ -1,4 +1,4 @@
-// ============ app.js (PART 1/2) : AUTO-CASCADE, LIVE SET PRs, TARGET TIME & COCKPIT ============
+// ============ app.js (PART 1/2) : CLICKABLE EXERCISE GUIDES, AUTO-CASCADE & COCKPIT ============
 
 function $(id) {
   return document.getElementById(id);
@@ -13,7 +13,6 @@ function esc(str) {
     .replace(/'/g, "&#39;");
 }
 
-// Local roundRect helper so Poster Generator never depends on external globals
 function drawRoundedBox(ctx, x, y, w, h, r) {
   ctx.beginPath();
   ctx.moveTo(x + r, y);
@@ -34,7 +33,7 @@ let currentTab = "workout";
 let workoutActive = false;
 let workoutStart = 0;
 let editingWorkoutId = null;
-let editingRoutineId = null; // null | routineId | "__NEW__"
+let editingRoutineId = null;
 let duoPartnerName = null;
 let duoActiveLifter = "p1";
 let clockId = null;
@@ -273,7 +272,7 @@ if ($("onbCloseBtn")) $("onbCloseBtn").addEventListener("click", closeOnboarding
 if ($("onboardingBackdrop")) $("onboardingBackdrop").addEventListener("click", closeOnboardingModal);
 if ($("onbSaveBtn")) $("onbSaveBtn").addEventListener("click", saveOnboarding);
 
-// ---------- Web Audio API (With Sound Mute Support) ----------
+// ---------- Web Audio API ----------
 let audioCtx = null;
 function getAudioCtx() {
   const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -543,7 +542,6 @@ if ($("toggleMetaDateBtn")) {
   });
 }
 
-// ---------- Screen Wake Lock API ----------
 async function requestWakeLock() {
   try {
     if ("wakeLock" in navigator && !wakeLock) {
@@ -606,12 +604,12 @@ document.addEventListener("keydown", function (e) {
   if (e.key !== "Escape") return;
   if ($("appDialogModal") && !$("appDialogModal").classList.contains("hidden")) {
     $("appDialogCancelBtn").click();
+  } else if ($("exInfoModal") && !$("exInfoModal").classList.contains("hidden")) {
+    closeExerciseInfo();
   } else if ($("onboardingModal") && !$("onboardingModal").classList.contains("hidden")) {
     closeOnboardingModal();
   } else if ($("plateModal") && !$("plateModal").classList.contains("hidden")) {
     closePlateCalculator();
-  } else if ($("exInfoModal") && !$("exInfoModal").classList.contains("hidden")) {
-    closeExerciseInfo();
   } else if ($("routinePreviewModal") && !$("routinePreviewModal").classList.contains("hidden")) {
     closeRoutinePreview();
   } else if ($("summaryModal") && !$("summaryModal").classList.contains("hidden")) {
@@ -660,7 +658,7 @@ window.addEventListener("hashchange", function () {
 });
 
 // =====================================================
-//  TAB 1: WORKOUT & ROUTINES (With Est. Duration Target)
+//  TAB 1: WORKOUT & ROUTINES
 // =====================================================
 function syncRoutineCategoryChips() {
   const container = $("routineCategoryFilter");
@@ -823,7 +821,7 @@ function openRoutinePreview(r) {
   const estMin = typeof estimateWorkoutMinutes === "function" ? estimateWorkoutMinutes(r.exercises) : 45;
   $("prevCatBadge").textContent = ((r.category || "CUSTOM ROUTINE") + "  ·  EST. TIME: ~" + estMin + " MIN").toUpperCase();
   $("prevRoutineTitle").textContent = r.name;
-  $("prevRoutineDesc").textContent = r.description || "Structured workout routine ready for progressive overload logging.";
+  $("prevRoutineDesc").textContent = r.description || "Tap any exercise below to view its Form Guide, YouTube Demo & History.";
 
   const list = $("prevExerciseList");
   list.innerHTML = "";
@@ -835,10 +833,13 @@ function openRoutinePreview(r) {
 
     const row = document.createElement("div");
     row.className = "preview-exercise-item";
+    row.style.cursor = "pointer";
+    row.title = "Tap for Form Guide & YouTube Demo";
 
     const nameDiv = document.createElement("div");
     nameDiv.className = "preview-ex-name";
-    nameDiv.textContent = pad(idx + 1) + ". " + exNameStr + (item.isSuperset ? " [SS]" : "");
+    nameDiv.style.textDecoration = "underline dashed rgba(212,180,131,0.5)";
+    nameDiv.textContent = pad(idx + 1) + ". " + exNameStr + (item.isSuperset ? " [SS]" : "") + " ⓘ";
 
     const metaDiv = document.createElement("div");
     metaDiv.className = "preview-ex-meta";
@@ -848,6 +849,9 @@ function openRoutinePreview(r) {
 
     row.appendChild(nameDiv);
     row.appendChild(metaDiv);
+    row.addEventListener("click", function () {
+      openExerciseInfo(item.exId);
+    });
     list.appendChild(row);
   });
 
@@ -998,7 +1002,7 @@ if ($("openPlateCalcSettingsBtn")) {
   });
 }
 
-// ---------- Exercise Form Guide, YouTube Demo & History Modal Controller ----------
+// ---------- Exercise Form Guide, YouTube Demo & History Modal Controller (Top-Layer Z-Index!) ----------
 function openExerciseInfo(exId) {
   const ex = getExercise(exId);
   if (!ex) return;
@@ -1081,6 +1085,8 @@ function openExerciseInfo(exId) {
     });
   }
 
+  $("exInfoBackdrop").style.zIndex = "260";
+  $("exInfoModal").style.zIndex = "265";
   $("exInfoBackdrop").classList.remove("hidden");
   $("exInfoModal").classList.remove("hidden");
 }
@@ -1134,7 +1140,7 @@ function updateHeroStats() {
 }
 
 // =====================================================
-//  ACTIVE WORKOUT COCKPIT & A1/A2 SUPERSET GROUPING
+//  ACTIVE WORKOUT COCKPIT
 // =====================================================
 function syncCockpitModeUI() {
   const modeTag = $("workoutModeTag");
@@ -1194,7 +1200,6 @@ function updateMiniBar() {
   $("miniBar").classList.toggle("hidden", !(workoutActive && !screenOpen));
 }
 
-// Fixed Bug #3: Shows "EDIT LOG" instead of "72:14:30" when editing a past workout!
 function updateClock() {
   if (editingRoutineId) {
     $("wClock").textContent = "BUILDER";
@@ -1674,7 +1679,6 @@ function renumberSupersetBadges() {
   });
 }
 
-// ---------- Exercise Card inside Live Workout (With Set 1 -> 2/3 Auto-Cascade & Live PR Badges!) ----------
 function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNotAppend) {
   const ex = getExercise(exId);
   if (!ex) return null;
@@ -1701,7 +1705,7 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
         '<div class="exHeadLeft">' +
           '<span class="ex-index">01</span>' +
           '<span class="superset-badge hidden">A1</span>' +
-          '<h3></h3>' +
+          '<h3 style="cursor:pointer;" title="Tap for Form Guide & YouTube Demo"></h3>' +
         '</div>' +
       '</div>' +
       '<div class="exActions">' +
@@ -1738,7 +1742,10 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
     '<div class="sets"></div>' +
     '<button class="addSetBtn">+ ADD SET</button>';
 
-  card.querySelector("h3").textContent = ex.name;
+  const titleEl = card.querySelector("h3");
+  titleEl.textContent = ex.name;
+  titleEl.addEventListener("click", function () { openExerciseInfo(exId); });
+
   const targetStrip = card.querySelector(".auto-target-strip");
   const hintText = generateAutoTargetHint(exId, card.dataset.targetreps);
   targetStrip.textContent = hintText;
@@ -1752,7 +1759,6 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
     toolsBtn.classList.toggle("open", isHidden);
   });
 
-  // Target Rep Range Editor inside Tools Drawer
   const targetRepsBtn = card.querySelector(".target-reps-btn");
   if (targetRepsBtn) {
     targetRepsBtn.addEventListener("click", async function () {
@@ -1772,7 +1778,6 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
     });
   }
 
-  // Pinned Note Always Visible Outside Drawer
   const noteInput = card.querySelector(".ex-pinned-note");
   noteInput.value = pinnedNote;
   noteInput.addEventListener("change", function () {
@@ -1801,7 +1806,6 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
   const setsDiv = card.querySelector(".sets");
   let lastFocusedRow = null;
 
-  // Auto-Cascade: Whatever you type in Set 1 cascades into empty Set 2 & Set 3 placeholders!
   function cascadeSetPlaceholders() {
     let lastKnownKg = "";
     let lastKnownReps = "";
@@ -1832,7 +1836,6 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
     });
   }
 
-  // Focused-Row Aware Target Finder for -2.5 / +2.5 Steppers
   function getTargetRowForStepper() {
     if (lastFocusedRow && lastFocusedRow.parentNode === setsDiv) return lastFocusedRow;
     const rows = setsDiv.querySelectorAll(".setRow");
@@ -1943,7 +1946,6 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
       '<button class="doneBox" aria-label="Complete Set">✓</button>' +
       '<button class="delSetBtn" title="Delete Set" aria-label="Delete Set">✕</button>';
 
-    // Track focused row and auto-cascade on typing
     row.querySelectorAll("input").forEach(function (inp) {
       inp.addEventListener("focus", function () { lastFocusedRow = row; });
       inp.addEventListener("input", function () {
@@ -1953,7 +1955,6 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
       });
     });
 
-    // Clicking PREV or Goal copies previous/cascaded values into the inputs
     const prevSpan = row.querySelector(".set-prev-hint");
     prevSpan.addEventListener("click", function () {
       lastFocusedRow = row;
@@ -2030,7 +2031,6 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
         const kgInput = row.querySelector(".kgInput");
         const repsInput = row.querySelector(".repsInput");
 
-        // Auto-fill from cascaded value or previous session if blank!
         if (kgInput && kgInput.value.trim() === "" && row.dataset.cascadekg) {
           kgInput.value = row.dataset.cascadekg;
         }
@@ -2060,7 +2060,6 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
         row.classList.add("done");
         cascadeSetPlaceholders();
 
-        // Hevy-Style Live Set-by-Set PR Evaluation & Gold [PR] Row Badge!
         let brokeLivePr = false;
         if (row.dataset.type !== "W" && row.dataset.lifter !== "p2" && typeof evaluateSetLivePRs === "function") {
           const setKg = kgInput ? toKg(weightVal) : 0;
@@ -2243,7 +2242,6 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
     saveDraft();
   });
 
-  // + ADD SET automatically pre-fills from the last set above it!
   card.querySelector(".addSetBtn").addEventListener("click", function () {
     const allRows = setsDiv.querySelectorAll(".setRow");
     const lastRow = allRows[allRows.length - 1];
@@ -2288,7 +2286,7 @@ function addExerciseCard(exId, setCount, savedSets, isSuperset, targetReps, doNo
   }
   return card;
 }
-// ============ app.js (PART 2/2) : FULL RESULT REPORT, LVL 1-10 ROADMAP, 5 ACCENTS & INIT ============
+// ============ app.js (PART 2/2) : CLICKABLE HISTORY/PROGRESS EXERCISES, REPORT & INIT ============
 
 function renderBodyMapSvg(containerId, workloadMap, isDarkCard) {
   const container = $(containerId);
@@ -2474,7 +2472,6 @@ function showSummaryModal(summaryData, fromHistory) {
   $("sumTitle").textContent = summaryData.title;
   $("sumDate").textContent = summaryData.date.toUpperCase() + "  ·  DURATION: " + summaryData.durationMin + " MIN (TARGET: ~" + (summaryData.estMinTarget || 45) + "M)";
 
-  // 1. Level & XP Card
   if ($("sumLevelBadge")) $("sumLevelBadge").textContent = "LVL " + prof.level + " // " + prof.rank;
   if ($("sumXpEarned")) $("sumXpEarned").textContent = "+" + (summaryData.xpEarned || 150) + " XP EARNED";
   if ($("sumXpBarFill")) $("sumXpBarFill").style.width = prof.progressPct + "%";
@@ -2484,7 +2481,6 @@ function showSummaryModal(summaryData, fromHistory) {
       : ("Total: " + prof.xp + " XP  ·  MAX LEVEL REACHED");
   }
 
-  // 2. 4 Key Comparison Tiles
   $("sumTiles").innerHTML =
     '<div class="ticket-metric-cell"><small>Total Volume</small><strong>' + esc(volText) + '</strong></div>' +
     '<div class="ticket-metric-cell"><small>Working Sets</small><strong>' + esc(summaryData.totalSets) + '</strong></div>' +
@@ -2495,7 +2491,6 @@ function showSummaryModal(summaryData, fromHistory) {
     $("sumDeltaBanner").textContent = summaryData.deltaText || "SESSION VERIFIED";
   }
 
-  // 3. PRs Broken Today
   const prSection = $("sumPrSection");
   const prList = $("sumPrs");
   prList.innerHTML = "";
@@ -2517,7 +2512,6 @@ function showSummaryModal(summaryData, fromHistory) {
     prSection.classList.add("hidden");
   }
 
-  // 4. Exercise-by-Exercise Progress & Set Breakdown
   const exContainer = $("sumExerciseBreakdown");
   if (exContainer) {
     exContainer.innerHTML = "";
@@ -2529,7 +2523,12 @@ function showSummaryModal(summaryData, fromHistory) {
       const topRow = document.createElement("div");
       topRow.className = "result-ex-top";
       const titleB = document.createElement("b");
-      titleB.textContent = pad(idx + 1) + ". " + ex.name + (ex.isSuperset ? " [SS]" : "");
+      titleB.style.cssText = "cursor:pointer; text-decoration:underline dashed rgba(212,180,131,0.5);";
+      titleB.title = "Tap for Form Guide & YouTube Demo";
+      titleB.textContent = pad(idx + 1) + ". " + ex.name + (ex.isSuperset ? " [SS]" : "") + " ⓘ";
+      titleB.addEventListener("click", function () {
+        openExerciseInfo(ex.exId);
+      });
       topRow.appendChild(titleB);
       box.appendChild(topRow);
 
@@ -2582,7 +2581,6 @@ function showSummaryModal(summaryData, fromHistory) {
     });
   }
 
-  // 5. Duo Head-to-Head Section
   const duoSec = $("sumDuoSection");
   const ds = summaryData.duoStats;
   if (duoSec) {
@@ -2600,7 +2598,6 @@ function showSummaryModal(summaryData, fromHistory) {
     }
   }
 
-  // 6. Muscle Split & Anatomy
   renderBodyMapSvg("sumBodyMap", summaryData.muscleMap, true);
   const mList = $("sumMuscles");
   mList.innerHTML = "";
@@ -2631,7 +2628,6 @@ function closeSummaryModal() {
   }
 }
 
-// High-Res 1080x1920 PNG Summary Card Exporter (Uses local drawRoundedBox!)
 function generateAndShareStoryPoster(sData) {
   if (!sData) return;
   const canvas = document.createElement("canvas");
@@ -3004,7 +3000,6 @@ async function finishWorkout() {
   const sessionTitle = $("wTitle").value.trim() || "Strength Session";
   const sessionNotes = $("wNotes").value.trim();
 
-  // Check if user specified a custom date or custom duration (Works for both New Backdated Workouts & Edited Workouts!)
   let finalTs = editingWorkoutId ? workoutStart : Date.now();
   const dateStr = $("wDateInput") ? $("wDateInput").value : "";
   if (dateStr) {
@@ -3136,7 +3131,7 @@ $("plus30").addEventListener("click", function () { addRest(30); });
 $("skipTimer").addEventListener("click", stopTimer);
 
 // =====================================================
-//  EXERCISE PICKER, SWAP & MANAGEMENT SHEET (Unlocked formType!)
+//  EXERCISE PICKER, SWAP & MANAGEMENT SHEET
 // =====================================================
 function showSheet() {
   $("sheetBackdrop").classList.remove("hidden");
@@ -3330,7 +3325,6 @@ function setFormType(v) {
   setSegmented($("formType"), v);
 }
 
-// Unlocked formType even in edit mode so user can switch Pull-ups/Push-ups to Weighted!
 function openForm(mode, ex) {
   sheetMode = mode;
   editingId = ex && ex.id ? ex.id : null;
@@ -3484,7 +3478,7 @@ bindSegmented($("formType"), v => { formType = v; });
 })();
 
 // =====================================================
-//  TAB 2: HISTORY, EDIT, REPEAT & PAGINATION
+//  TAB 2: HISTORY (With Clickable Exercise Names!)
 // =====================================================
 function renderHistoryTab() {
   renderCalendar();
@@ -3638,7 +3632,13 @@ function renderHistoryList() {
       const line = document.createElement("div");
       line.className = "history-exercise-line";
       const name = document.createElement("b");
-      name.textContent = exName(ex.exId) + (ex.isSuperset ? " [SS]" : "");
+      name.style.cssText = "cursor:pointer; text-decoration:underline dashed rgba(212,180,131,0.5);";
+      name.title = "Tap for Form Guide, Muscles & YouTube Demo";
+      name.textContent = exName(ex.exId) + (ex.isSuperset ? " [SS]" : "") + " ⓘ";
+      name.addEventListener("click", function () {
+        openExerciseInfo(ex.exId);
+      });
+
       const sub = document.createElement("div");
       sub.className = "history-sets-sub";
       sub.textContent = setsText(ex, w.partnerName);
@@ -3712,7 +3712,7 @@ function renderHistoryList() {
 }
 
 // =====================================================
-//  TAB 3: PROGRESS, CONNECTED LVL 1-10 ROADMAP & CHARTS
+//  TAB 3: PROGRESS (With Clickable Exercise Guides!)
 // =====================================================
 function renderProgressTab() {
   renderAchievements();
@@ -3921,6 +3921,14 @@ function renderProgressChart() {
         });
       }
     }
+    const infoBtnWrap = document.createElement("button");
+    infoBtnWrap.className = "keycap-btn small";
+    infoBtnWrap.style.cssText = "grid-column: 1 / -1; margin-top: 6px; text-align:center; padding:8px; color:var(--brass);";
+    infoBtnWrap.textContent = "VIEW FORM GUIDE, YOUTUBE DEMO & LOGS FOR " + exName(progressExId).toUpperCase() + " ⓘ";
+    infoBtnWrap.addEventListener("click", function () {
+      openExerciseInfo(progressExId);
+    });
+    rmBox.appendChild(infoBtnWrap);
   }
 }
 
@@ -3954,10 +3962,13 @@ function renderRecords() {
     const st = getStats(getAllSets(ex.id));
     const row = document.createElement("div");
     row.className = "record-row";
+    row.style.cursor = "pointer";
+    row.title = "Tap for Form Guide, YouTube Demo & History";
 
     const name = document.createElement("span");
     name.className = "record-name";
-    name.textContent = ex.name;
+    name.style.textDecoration = "underline dashed rgba(212,180,131,0.5)";
+    name.textContent = ex.name + " ⓘ";
 
     const val = document.createElement("span");
     val.className = "record-value";
@@ -3971,6 +3982,9 @@ function renderRecords() {
 
     row.appendChild(name);
     row.appendChild(val);
+    row.addEventListener("click", function () {
+      openExerciseInfo(ex.id);
+    });
     box.appendChild(row);
   });
 }
@@ -4292,13 +4306,31 @@ function renderLibrary() {
     leftDiv.appendChild(nameSpan);
     leftDiv.appendChild(metaDiv);
 
-    const editSmall = document.createElement("small");
-    editSmall.style.cssText = "font-family:var(--font-mono); color:var(--brass);";
-    editSmall.textContent = "EDIT ›";
+    const rightBtns = document.createElement("div");
+    rightBtns.style.cssText = "display:flex; gap:6px; align-items:center;";
+    const infoBtn = document.createElement("button");
+    infoBtn.className = "keycap-btn small";
+    infoBtn.style.color = "var(--brass)";
+    infoBtn.textContent = "GUIDE";
+    infoBtn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      openExerciseInfo(ex.id);
+    });
+
+    const editBtn = document.createElement("button");
+    editBtn.className = "keycap-btn small";
+    editBtn.textContent = "EDIT";
+    editBtn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      openForm("edit", ex);
+    });
+
+    rightBtns.appendChild(infoBtn);
+    rightBtns.appendChild(editBtn);
 
     cell.appendChild(leftDiv);
-    cell.appendChild(editSmall);
-    cell.addEventListener("click", function () { openForm("edit", ex); });
+    cell.appendChild(rightBtns);
+    cell.addEventListener("click", function () { openExerciseInfo(ex.id); });
     list.appendChild(cell);
   });
   $("exCount").textContent = all.length + " ›";
